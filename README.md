@@ -20,27 +20,27 @@ pip install holonic rdflib requests
 ## Quick Start
 
 ```bash
-# Current week — Bengals fan
-python pipeline.py --team CIN
+# Current week — Steelers fan
+python pipeline.py --team PIT
 
 # Specific week, save the graph
-python pipeline.py --team CIN --week 14 --season 2025 --output holarchy.trig
+python pipeline.py --team PIT --week 14 --season 2025 --output holarchy.trig
 
 # Also dump each named graph as individual Turtle files
-python pipeline.py --team CIN --output holarchy.trig --dump-graphs
+python pipeline.py --team PIT --output holarchy.trig --dump-graphs
 
 # Dislikes also affect recommendation scores
-python pipeline.py --team CIN --dislikes PIT BAL --output holarchy.trig
+python pipeline.py --team PIT --dislikes BAL CLE --output holarchy.trig
 
 # Offline mode (use saved ESPN JSON)
-python pipeline.py --team CIN --json-file espn_data.json
+python pipeline.py --team PIT --json-file espn_data.json
 ```
 
 ---
 
 ## File Layout
 
-```
+```text
 nfl_holonic/
 ├── pipeline.py                          # Orchestration entry point
 ├── requirements.txt
@@ -53,7 +53,7 @@ nfl_holonic/
 ├── builders/
 │   ├── espn_fetcher.py                  # ESPN API → normalised Python dicts
 │   ├── rdf_builder.py                   # Dicts → holonic rdflib Dataset
-│   └── recommendation_engine.py        # Graph reasoning → rooting recommendations
+│   └── recommendation_engine.py         # Graph reasoning → rooting recommendations
 │
 └── queries/
     └── sparql_queries.py                # Named SPARQL queries + run_query() helper
@@ -63,16 +63,16 @@ nfl_holonic/
 
 ## Named Graphs (the Four-Layer Holonic Model)
 
-| Named Graph IRI                     | Layer     | Contents                                  |
-|-------------------------------------|-----------|-------------------------------------------|
-| `urn:nfl:graph:team:<ABBR>`         | Interior  | Per-team facts (name, record, division)   |
-| `urn:nfl:graph:games:<season>:<wk>` | Interior  | Game events for a specific week           |
-| `urn:nfl:graph:outcomes`            | Interior  | Completed game outcomes + impact edges    |
-| `urn:nfl:graph:competition`         | Interior  | Structural & competitive edges            |
-| `urn:nfl:graph:standings`           | Interior  | Standings snapshot + playoff assignments  |
-| `urn:nfl:graph:holarchy`            | Context   | Registry of all holons + their graph IRIs |
-| `urn:nfl:graph:recommendations`     | Projection| User-specific rooting recommendations     |
-| (default graph)                     | Boundary  | Ontology / SHACL shapes                   |
+| Named Graph IRI                     | Layer      | Contents                                  |
+|-------------------------------------|------------|--------------------------------------------|
+| `urn:nfl:graph:team:<ABBR>`         | Interior   | Per-team facts (name, record, division)    |
+| `urn:nfl:graph:games:<season>:<wk>` | Interior   | Game events for a specific week            |
+| `urn:nfl:graph:outcomes`            | Interior   | Completed game outcomes + impact edges     |
+| `urn:nfl:graph:competition`         | Interior   | Structural & competitive edges             |
+| `urn:nfl:graph:standings`           | Interior   | Standings snapshot + playoff assignments   |
+| `urn:nfl:graph:holarchy`            | Context    | Registry of all holons + their graph IRIs  |
+| `urn:nfl:graph:recommendations`     | Projection | User-specific rooting recommendations      |
+| (default graph)                     | Boundary   | Ontology / SHACL shapes                    |
 
 ---
 
@@ -80,7 +80,7 @@ nfl_holonic/
 
 All queries are importable from `queries/sparql_queries.py`.
 
-### Games that help the Bengals
+### Games that help the Steelers
 
 ```sparql
 PREFIX impact: <urn:nfl:impact:>
@@ -89,7 +89,7 @@ PREFIX nfl:    <urn:nfl:>
 SELECT ?outcome ?winnerName ?impactScore WHERE {
     GRAPH <urn:nfl:graph:outcomes> {
         ?outcome a nfl:Outcome ;
-                 impact:improvesOdds <urn:nfl:team:CIN> ;
+                 impact:improvesOdds <urn:nfl:team:PIT> ;
                  nfl:winner ?winner .
         OPTIONAL { ?outcome impact:score ?impactScore }
     }
@@ -140,7 +140,7 @@ from rdflib import URIRef, RDF, Namespace
 
 PLAYOFF = Namespace("urn:nfl:playoff:")
 ds.graph("urn:nfl:graph:scenarios").add((
-    URIRef("urn:nfl:scenario:BengalsClinch"),
+    URIRef("urn:nfl:scenario:SteelersClinch"),
     RDF.type,
     PLAYOFF.Scenario,
 ))
@@ -151,15 +151,15 @@ ds.graph("urn:nfl:graph:scenarios").add((
 ```python
 from rdf_builder import USER, NFL, _team_iri
 user_g = builder.dataset.graph("urn:nfl:graph:users")
-user_g.add((USER["josh"], NFL.favoriteTeam, _team_iri("CIN")))
-user_g.add((USER["josh"], NFL.dislikes,     _team_iri("PIT")))
+user_g.add((USER["josh"], NFL.favoriteTeam, _team_iri("PIT")))
+user_g.add((USER["josh"], NFL.dislikes,     _team_iri("BAL")))
 ```
 
 ---
 
 ## Architecture
 
-```
+```text
 ESPN API
    │
    ▼
@@ -168,14 +168,14 @@ espn_fetcher.py        ← HTTP → normalised Python dicts
    ▼
 rdf_builder.py         ← dicts → rdflib Dataset (named graphs)
    │
-   ├── ontology/*.ttl  ← loaded into default graph (boundary layer)
+   ├── ontology/*.ttl    ← loaded into default graph (boundary layer)
    │
-   ├── graph:team:*    ← interior: per-team holons
-   ├── graph:games:*   ← interior: game holons (week-scoped)
-   ├── graph:outcomes  ← interior: outcomes + impact edges
+   ├── graph:team:*      ← interior: per-team holons
+   ├── graph:games:*     ← interior: game holons (week-scoped)
+   ├── graph:outcomes    ← interior: outcomes + impact edges
    ├── graph:competition ← interior: rivalry / competitive edges
-   ├── graph:standings ← interior: standings snapshot
-   └── graph:holarchy  ← context: holon registry
+   ├── graph:standings   ← interior: standings snapshot
+   └── graph:holarchy    ← context: holon registry
            │
            ▼
    recommendation_engine.py   ← SPARQL → scoring → graph:recommendations
@@ -186,3 +186,4 @@ rdf_builder.py         ← dicts → rdflib Dataset (named graphs)
            ▼
    pipeline.py                ← CLI entry point, serialize → .trig
 ```
+
