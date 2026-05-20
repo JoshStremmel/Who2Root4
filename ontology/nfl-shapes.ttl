@@ -1,0 +1,553 @@
+@prefix sh:     <http://www.w3.org/ns/shacl#> .
+@prefix cga:    <urn:holonic:ontology:> .
+@prefix nfl:    <urn:nfl:> .
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+
+# ══════════════════════════════════════════════════════════════
+# NFL Who2Root4 — SHACL Boundary Shapes   v0.1.0
+#
+# These shapes live in the boundary layer of each holon and are
+# validated via HolonicDataset.validate_membrane().
+#
+# Organized by holon type:
+#   1. Team holon shapes
+#   2. Game holon shapes
+#   3. Week holon shapes
+#   4. Season holon shapes
+#   5. Division holon shapes
+#   6. Scenario holon shapes
+#   7. Portal shapes (NFL-specific)
+#   8. Cross-holon integrity constraints
+# ══════════════════════════════════════════════════════════════
+
+
+# ──────────────────────────────────────────────────────────────
+# 1. TEAM HOLON SHAPES
+#
+# A team holon's interior must carry the minimum facts needed
+# for playoff reasoning: name, abbreviation, conference,
+# division, and a win/loss record.
+# ──────────────────────────────────────────────────────────────
+
+nfl:TeamHolonShape a sh:NodeShape ;
+    sh:targetClass cga:DataHolon ;
+    sh:name "NFL Team Holon" ;
+    sh:description "Validates the interior of a team holon." ;
+
+    # Must have a label (inherited from cga:HolonShape but repeated
+    # here at Violation severity for team holons specifically)
+    sh:property [
+        sh:path     rdfs:label ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:severity sh:Violation ;
+        sh:message  "Team holon must have a label (team name)."
+    ] ;
+
+    # Must have an abbreviation
+    sh:property [
+        sh:path     nfl:abbreviation ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:maxLength 3 ;
+        sh:severity sh:Violation ;
+        sh:message  "Team holon must have exactly one abbreviation (2-3 chars)."
+    ] ;
+
+    # Must declare conference membership
+    sh:property [
+        sh:path     nfl:conference ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:severity sh:Violation ;
+        sh:message  "Team holon must declare exactly one conference (AFC or NFC)."
+    ] ;
+
+    # Must declare division membership
+    sh:property [
+        sh:path     nfl:division ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:severity sh:Violation ;
+        sh:message  "Team holon must declare exactly one division."
+    ] ;
+
+    # Wins must be a non-negative integer when present
+    sh:property [
+        sh:path     nfl:wins ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 17 ;
+        sh:severity sh:Warning ;
+        sh:message  "nfl:wins must be an integer between 0 and 17."
+    ] ;
+
+    # Losses must be a non-negative integer when present
+    sh:property [
+        sh:path     nfl:losses ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 17 ;
+        sh:severity sh:Warning ;
+        sh:message  "nfl:losses must be an integer between 0 and 17."
+    ] ;
+
+    # Win percentage must be between 0.0 and 1.0
+    sh:property [
+        sh:path     nfl:winPct ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:float ;
+        sh:minInclusive 0.0 ;
+        sh:maxInclusive 1.0 ;
+        sh:severity sh:Warning ;
+        sh:message  "nfl:winPct must be a float between 0.0 and 1.0."
+    ] ;
+    .
+
+
+# ──────────────────────────────────────────────────────────────
+# 2. GAME HOLON SHAPES
+#
+# A game holon's interior must carry both team references,
+# a week number, season year, and status. Completed games
+# must also carry scores.
+# ──────────────────────────────────────────────────────────────
+
+nfl:GameHolonShape a sh:NodeShape ;
+    sh:targetClass cga:DataHolon ;
+    sh:name "NFL Game Holon" ;
+    sh:description "Validates the interior of a game holon." ;
+
+    sh:property [
+        sh:path     nfl:homeTeam ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:severity sh:Violation ;
+        sh:message  "Game holon must reference exactly one home team."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:awayTeam ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:severity sh:Violation ;
+        sh:message  "Game holon must reference exactly one away team."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:week ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 1 ;
+        sh:maxInclusive 22 ;
+        sh:severity sh:Violation ;
+        sh:message  "Game holon must have a week number (1–22)."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:season ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 2000 ;
+        sh:severity sh:Violation ;
+        sh:message  "Game holon must have a 4-digit season year."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:status ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:in       ( "pre" "in" "post" ) ;
+        sh:severity sh:Violation ;
+        sh:message  "Game status must be one of: pre, in, post."
+    ] ;
+
+    # Scores are only required for completed games (enforced separately)
+    sh:property [
+        sh:path     nfl:homeScore ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 0 ;
+        sh:severity sh:Warning ;
+        sh:message  "nfl:homeScore must be a non-negative integer."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:awayScore ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 0 ;
+        sh:severity sh:Warning ;
+        sh:message  "nfl:awayScore must be a non-negative integer."
+    ] ;
+    .
+
+# Completed games must have scores
+nfl:CompletedGameShape a sh:NodeShape ;
+    sh:name "Completed Game Score Requirement" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT ?this WHERE {
+                GRAPH ?g { ?this nfl:status "post" }
+            }
+        """
+    ] ;
+    sh:property [
+        sh:path     nfl:homeScore ;
+        sh:minCount 1 ;
+        sh:severity sh:Violation ;
+        sh:message  "Completed game must have a homeScore."
+    ] ;
+    sh:property [
+        sh:path     nfl:awayScore ;
+        sh:minCount 1 ;
+        sh:severity sh:Violation ;
+        sh:message  "Completed game must have an awayScore."
+    ] ;
+    .
+
+
+# ──────────────────────────────────────────────────────────────
+# 3. WEEK HOLON SHAPES
+# ──────────────────────────────────────────────────────────────
+
+nfl:WeekHolonShape a sh:NodeShape ;
+    sh:name "NFL Week Holon" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT ?this WHERE {
+                GRAPH ?g { ?this nfl:weekNumber ?w }
+            }
+        """
+    ] ;
+
+    sh:property [
+        sh:path     nfl:weekNumber ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 1 ;
+        sh:maxInclusive 22 ;
+        sh:severity sh:Violation ;
+        sh:message  "Week holon must have a weekNumber (1–22)."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:season ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:severity sh:Violation ;
+        sh:message  "Week holon must reference its parent season holon."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:seasonType ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:severity sh:Warning ;
+        sh:message  "Week holon should carry a seasonType label."
+    ] ;
+    .
+
+
+# ──────────────────────────────────────────────────────────────
+# 4. SEASON HOLON SHAPES
+# ──────────────────────────────────────────────────────────────
+
+nfl:SeasonHolonShape a sh:NodeShape ;
+    sh:name "NFL Season Holon" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT ?this WHERE {
+                GRAPH ?g { ?this nfl:year ?y }
+            }
+        """
+    ] ;
+
+    sh:property [
+        sh:path     nfl:year ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 2000 ;
+        sh:severity sh:Violation ;
+        sh:message  "Season holon must have a 4-digit year."
+    ] ;
+    .
+
+
+# ──────────────────────────────────────────────────────────────
+# 5. DIVISION HOLON SHAPES
+# ──────────────────────────────────────────────────────────────
+
+nfl:DivisionHolonShape a sh:NodeShape ;
+    sh:name "NFL Division Holon" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT ?this WHERE {
+                GRAPH ?g { ?this nfl:hasMember ?m }
+            }
+        """
+    ] ;
+
+    sh:property [
+        sh:path     nfl:name ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:severity sh:Violation ;
+        sh:message  "Division holon must have a name."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:conference ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:severity sh:Violation ;
+        sh:message  "Division holon must declare its parent conference."
+    ] ;
+
+    # Each division should have exactly 4 member teams
+    sh:sparql [
+        sh:message  "Division holon should have exactly 4 member teams." ;
+        sh:severity sh:Warning ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT $this WHERE {
+                {
+                    SELECT $this (COUNT(?m) AS ?count) WHERE {
+                        GRAPH ?g { $this nfl:hasMember ?m }
+                    }
+                    GROUP BY $this
+                }
+                FILTER(?count != 4)
+            }
+        """
+    ] ;
+    .
+
+
+# ──────────────────────────────────────────────────────────────
+# 6. SCENARIO HOLON SHAPES
+# ──────────────────────────────────────────────────────────────
+
+nfl:ScenarioHolonShape a sh:NodeShape ;
+    sh:name "NFL Playoff Scenario Holon" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT ?this WHERE {
+                GRAPH ?g { ?this nfl:scenarioType ?t }
+            }
+        """
+    ] ;
+
+    sh:property [
+        sh:path     nfl:scenarioType ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:in       ( "clinch_division" "clinch_wildcard" "eliminated" ) ;
+        sh:severity sh:Violation ;
+        sh:message  "Scenario type must be: clinch_division, clinch_wildcard, or eliminated."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:beneficiary ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:severity sh:Violation ;
+        sh:message  "Scenario must declare exactly one beneficiary team."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:isActive ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:boolean ;
+        sh:severity sh:Warning ;
+        sh:message  "Scenario should declare whether it is currently active."
+    ] ;
+
+    sh:property [
+        sh:path     nfl:remainingGames ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 0 ;
+        sh:severity sh:Warning ;
+        sh:message  "Scenario should declare how many requirement games remain."
+    ] ;
+    .
+
+
+# ──────────────────────────────────────────────────────────────
+# 7. NFL PORTAL SHAPES
+# ──────────────────────────────────────────────────────────────
+
+# Impact portals (game → team) must have a construct query
+# and declare a portal role
+nfl:ImpactPortalShape a sh:NodeShape ;
+    sh:name "NFL Impact Portal" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            PREFIX cga: <urn:holonic:ontology:>
+            SELECT ?this WHERE {
+                GRAPH ?g {
+                    ?this a cga:TransformPortal ;
+                          cga:sourceHolon ?src .
+                    ?src nfl:homeTeam ?ht .
+                }
+            }
+        """
+    ] ;
+
+    sh:property [
+        sh:path     cga:constructQuery ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:severity sh:Violation ;
+        sh:message  "Impact TransformPortal must have exactly one constructQuery."
+    ] ;
+    .
+
+# Competition (rivalry) portals must be IconPortals and must NOT
+# carry a constructQuery
+nfl:RivalryPortalShape a sh:NodeShape ;
+    sh:name "NFL Rivalry Portal" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl:  <urn:nfl:>
+            PREFIX cga:  <urn:holonic:ontology:>
+            SELECT ?this WHERE {
+                GRAPH ?g {
+                    ?this a cga:IconPortal ;
+                          nfl:portalRole "divisionalRival" .
+                }
+            }
+        """
+    ] ;
+    sh:property [
+        sh:path     cga:constructQuery ;
+        sh:maxCount 0 ;
+        sh:severity sh:Warning ;
+        sh:message  "Rivalry IconPortal should not carry a constructQuery."
+    ] ;
+    .
+
+
+# ──────────────────────────────────────────────────────────────
+# 8. CROSS-HOLON INTEGRITY CONSTRAINTS
+# ──────────────────────────────────────────────────────────────
+
+# A game's home and away teams must be different holons
+nfl:GameTeamDistinctShape a sh:NodeShape ;
+    sh:name "Game teams must be distinct" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT ?this WHERE {
+                GRAPH ?g { ?this nfl:homeTeam ?t ; nfl:awayTeam ?t }
+            }
+        """
+    ] ;
+    sh:sparql [
+        sh:message  "A game's homeTeam and awayTeam must be different teams." ;
+        sh:severity sh:Violation ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT $this WHERE {
+                GRAPH ?g {
+                    $this nfl:homeTeam ?home ;
+                          nfl:awayTeam ?away .
+                    FILTER(?home = ?away)
+                }
+            }
+        """
+    ] ;
+    .
+
+# A scenario's beneficiary must exist as a holon in the holarchy
+nfl:ScenarioBeneficiaryExistsShape a sh:NodeShape ;
+    sh:name "Scenario beneficiary must exist" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT ?this WHERE {
+                GRAPH ?g { ?this nfl:beneficiary ?b }
+            }
+        """
+    ] ;
+    sh:sparql [
+        sh:message  "Scenario beneficiary team does not exist as a holon." ;
+        sh:severity sh:Violation ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            PREFIX cga: <urn:holonic:ontology:>
+            SELECT $this WHERE {
+                GRAPH ?g { $this nfl:beneficiary ?b }
+                FILTER NOT EXISTS { ?b a cga:Holon }
+            }
+        """
+    ] ;
+    .
+
+# Teams referenced in game holons must exist as registered holons
+nfl:GameTeamExistsShape a sh:NodeShape ;
+    sh:name "Game team references must resolve" ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            SELECT ?this WHERE {
+                GRAPH ?g { ?this nfl:homeTeam ?t }
+            }
+        """
+    ] ;
+    sh:sparql [
+        sh:message  "Game references a team holon that does not exist in the holarchy." ;
+        sh:severity sh:Warning ;
+        sh:select """
+            PREFIX nfl: <urn:nfl:>
+            PREFIX cga: <urn:holonic:ontology:>
+            SELECT $this WHERE {
+                GRAPH ?g {
+                    { $this nfl:homeTeam ?t } UNION { $this nfl:awayTeam ?t }
+                }
+                FILTER NOT EXISTS { ?t a cga:Holon }
+            }
+        """
+    ] ;
+    .
