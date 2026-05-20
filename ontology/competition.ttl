@@ -1,0 +1,53 @@
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix nfl:    <urn:nfl:> .
+
+# ─────────────────────────────────────────
+# Competitive Edge Properties
+# ─────────────────────────────────────────
+
+nfl:rival           a owl:ObjectProperty ;
+    rdfs:label "rival" ;
+    rdfs:comment "Traditional divisional or historic rivalry." .
+
+nfl:competesWith    a owl:ObjectProperty ;
+    rdfs:label "competesWith" ;
+    rdfs:comment "Two teams competing for the same playoff spot." .
+
+nfl:eliminates      a owl:ObjectProperty ;
+    rdfs:label "eliminates" ;
+    rdfs:comment "TeamA has eliminated TeamB from playoff contention." .
+
+nfl:blocksSeed      a owl:ObjectProperty ;
+    rdfs:label "blocksSeed" ;
+    rdfs:comment "TeamA occupies a seed that blocks TeamB." .
+
+nfl:tiebreakOver    a owl:ObjectProperty ;
+    rdfs:label "tiebreakOver" ;
+    rdfs:comment "TeamA currently holds tiebreaker advantage over TeamB." .
+
+nfl:divisionalRival a owl:ObjectProperty ;
+    rdfs:subPropertyOf nfl:rival ;
+    rdfs:label "divisionalRival" ;
+    rdfs:comment "Teams in the same division (auto-generated)." .
+
+nfl:wildCardRival   a owl:ObjectProperty ;
+    rdfs:subPropertyOf nfl:competesWith ;
+    rdfs:label "wildCardRival" ;
+    rdfs:comment "Teams competing for the same wildcard spot." .
+
+nfl:divisionLeader  a owl:ObjectProperty ;
+    rdfs:label "divisionLeader" ;
+    rdfs:comment "The current division-leading team for a given division." .
+
+nfl:gamesBack       a owl:DatatypeProperty ;
+    rdfs:label "gamesBack" ;
+    rdfs:comment "How many games behind the division leader a team is." ;
+    rdfs:range xsd:float .
+
+nfl:magicNumber     a owl:DatatypeProperty ;
+    rdfs:label "magicNumber" ;
+    rdfs:comment "Games until playoff clinch (wins needed + opponent losses needed)." ;
+    rdfs:range xsd:integer .
