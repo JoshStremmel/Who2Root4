@@ -97,6 +97,8 @@ def main() -> None:
             from_week    = args.from_week,
             through_week = args.through_week,
         )
+        if args.postseason:
+            ingester.ingest_postseason()
         ingester.write_temporal_edges()
         ingester.write_week_sequence_edges()
         ingester.print_summary()
@@ -251,6 +253,8 @@ def _parse_args() -> argparse.Namespace:
     # Season scope
     p.add_argument("--full-season",   action="store_true",
                    help="Ingest all weeks of the season (uses disk cache)")
+    p.add_argument("--postseason",    action="store_true",
+                   help="Also ingest postseason rounds (Wild Card → Super Bowl)")
     p.add_argument("--season",        type=int,
                    help="Season year, e.g. 2025 (default: auto-detected)")
     p.add_argument("--week",          type=int,

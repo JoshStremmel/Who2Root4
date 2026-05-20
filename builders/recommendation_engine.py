@@ -145,10 +145,12 @@ class RecommendationEngine:
 
         Score components
         ────────────────
-        divisional_bonus  : 0.40  (opponent in same division)
-        conference_bonus  : 0.25  (opponent in same conference)
-        record_delta      : 0.20  (how many games ahead/behind)
-        dislike_bonus     : 0.15  (loathed team is involved)
+        divisional_bonus   : 0.40  (opponent in same division as fav)
+        conference_bonus   : 0.20  (opponent in same conference)
+        scenario_bonus     : 0.25  (game satisfies an active scenario requirement)
+        dislike_bonus      : 0.15  (loathed team is involved)
+        record_delta       : 0.10  (how close standings are)
+        postseason_bonus   : 0.10  (extra weight for playoff games)
         """
         home = gd["home_abbr"]
         away = gd["away_abbr"]
@@ -157,19 +159,32 @@ class RecommendationEngine:
         if home == self.fav_abbr or away == self.fav_abbr:
             return None
 
-        home_div  = DIVISION_MAP.get(home, "")
-        away_div  = DIVISION_MAP.get(away, "")
         home_conf = CONFERENCE_MAP.get(home, "")
         away_conf = CONFERENCE_MAP.get(away, "")
 
-        # Only care about same-conference games
-        if home_conf != self.fav_conf and away_conf != self.fav_conf:
-            return None
+        # Only care about same-conference games (or postseason)
+        is_postseason = gd.get("is_postseason", False)
+        if not is_postseason:
+            if home_conf != self.fav_conf and away_conf != self.fav_conf:
+                return None
 
-        home_score_val = self._score_for(home, away, home_div, home_conf)
-        away_score_val = self._score_for(away, home, away_div, away_conf)
+        # Active scenario requirements for the fav team
+        active_scenario_wins   = self._active_scenario_wins()
+        active_scenario_losses = self._active_scenario_losses()
 
-        # Root for the team whose WIN helps the fav most
+        home_score_val = self._score_for(
+            home, away,
+            DIVISION_MAP.get(home, ""), home_conf,
+            active_scenario_wins, active_scenario_losses,
+            is_postseason,
+        )
+        away_score_val = self._score_for(
+            away, home,
+            DIVISION_MAP.get(away, ""), away_conf,
+            active_scenario_wins, active_scenario_losses,
+            is_postseason,
+        )
+
         if home_score_val >= away_score_val:
             root_abbr    = home
             against_abbr = away
@@ -181,8 +196,11 @@ class RecommendationEngine:
 
         reasoning = self._build_reasoning(
             root_abbr, against_abbr,
-            DIVISION_MAP.get(root_abbr, ""), CONFERENCE_MAP.get(root_abbr, ""),
+            DIVISION_MAP.get(root_abbr, ""),
+            CONFERENCE_MAP.get(root_abbr, ""),
             total_score,
+            active_scenario_wins, active_scenario_losses,
+            is_postseason,
         )
 
         return RootingRecommendation(
@@ -199,60 +217,139 @@ class RecommendationEngine:
 
     def _score_for(
         self,
-        candidate: str,   # team whose win we're evaluating
-        opponent:  str,
+        candidate:   str,
+        opponent:    str,
         candidate_div: str,
         candidate_conf: str,
+        scenario_wins:   set[str],
+        scenario_losses: set[str],
+        is_postseason:   bool,
     ) -> float:
         """Return a raw impact score for rooting for `candidate` winning."""
         score = 0.0
 
-        # Opponent is in our division → their loss helps us most
         opp_div  = DIVISION_MAP.get(opponent, "")
         opp_conf = CONFERENCE_MAP.get(opponent, "")
 
+        # Divisional / conference impact
         if opp_div == self.fav_div:
-            score += 0.40   # opponent losing in our division = best case
+            score += 0.40
         elif opp_conf == self.fav_conf:
-            score += 0.20   # opponent losing in our conference still helps
+            score += 0.20
 
-        # Candidate winning tightens their division vs someone we care about
-        if candidate_div == self.fav_div:
-            score += 0.10   # same-division team winning pushes a rival back
+        # Scenario-aware bonus: candidate winning satisfies a required win
+        if candidate in scenario_wins:
+            score += 0.25
 
-        # Dislike bonus: if the opponent is a team we dislike, rooting against them is rewarding
+        # Scenario-aware bonus: opponent losing satisfies a required loss
+        if opponent in scenario_losses:
+            score += 0.25
+
+        # Dislike bonus
         if opponent in self.disliked:
             score += 0.15
 
-        # Small record-based delta (prefer games where standings are close)
-        fav_rec  = self._win_pct(self.fav_abbr)
-        opp_rec  = self._win_pct(opponent)
-        delta    = abs(fav_rec - opp_rec)
-        score   += max(0.0, 0.15 - delta * 0.3)   # close records → higher relevance
+        # Record closeness
+        fav_rec = self._win_pct(self.fav_abbr)
+        opp_rec = self._win_pct(opponent)
+        delta   = abs(fav_rec - opp_rec)
+        score  += max(0.0, 0.10 - delta * 0.2)
+
+        # Postseason games always matter more
+        if is_postseason:
+            score += 0.10
 
         return score
 
     def _build_reasoning(
         self,
-        root_abbr: str,
-        against_abbr: str,
-        root_div: str,
-        root_conf: str,
-        score: float,
+        root_abbr:       str,
+        against_abbr:    str,
+        root_div:        str,
+        root_conf:       str,
+        score:           float,
+        scenario_wins:   set[str],
+        scenario_losses: set[str],
+        is_postseason:   bool,
     ) -> str:
         parts = []
         opp_div  = DIVISION_MAP.get(against_abbr, "")
         opp_conf = CONFERENCE_MAP.get(against_abbr, "")
 
-        if opp_div == self.fav_div:
+        if is_postseason:
+            parts.append("postseason game — every result reshapes the bracket")
+        elif opp_div == self.fav_div:
             parts.append(f"{against_abbr} is a division rival — their loss directly helps")
         elif opp_conf == self.fav_conf:
             parts.append(f"{against_abbr} is a conference competitor — their loss improves wild card odds")
+
+        if root_abbr in scenario_wins:
+            parts.append(f"{root_abbr} winning satisfies an active clinch scenario requirement")
+        if against_abbr in scenario_losses:
+            parts.append(f"{against_abbr} losing satisfies an active clinch scenario requirement")
         if against_abbr in self.disliked:
             parts.append(f"you also dislike {against_abbr}")
+
         if not parts:
             parts.append("indirect playoff impact")
+
         return "; ".join(parts) + f" (score {score:.2f})"
+
+    # ── Scenario helpers ──────────────────────────────────────────────────────
+
+    def _active_scenario_wins(self) -> set[str]:
+        """
+        Query the graph for teams whose WIN is required by an active
+        scenario benefiting the favorite team.
+        """
+        q = f"""
+        PREFIX nfl:  <urn:nfl:>
+        PREFIX cga:  <urn:holonic:ontology:>
+        SELECT ?team WHERE {{
+            GRAPH ?g {{
+                ?scenario nfl:isActive "true"^^<http://www.w3.org/2001/XMLSchema#boolean> ;
+                          nfl:beneficiary <urn:nfl:holon:team:{self.fav_abbr}> .
+                ?portal cga:sourceHolon ?scenario ;
+                        nfl:requirementType "win" ;
+                        cga:targetHolon ?team .
+            }}
+        }}
+        """
+        abbrs: set[str] = set()
+        try:
+            for row in self.dataset.query(q):
+                iri = str(row.team)
+                abbrs.add(iri.split(":")[-1])
+        except Exception:
+            pass
+        return abbrs
+
+    def _active_scenario_losses(self) -> set[str]:
+        """
+        Query the graph for teams whose LOSS is required by an active
+        scenario benefiting the favorite team.
+        """
+        q = f"""
+        PREFIX nfl:  <urn:nfl:>
+        PREFIX cga:  <urn:holonic:ontology:>
+        SELECT ?team WHERE {{
+            GRAPH ?g {{
+                ?scenario nfl:isActive "true"^^<http://www.w3.org/2001/XMLSchema#boolean> ;
+                          nfl:beneficiary <urn:nfl:holon:team:{self.fav_abbr}> .
+                ?portal cga:sourceHolon ?scenario ;
+                        nfl:requirementType "loss" ;
+                        cga:targetHolon ?team .
+            }}
+        }}
+        """
+        abbrs: set[str] = set()
+        try:
+            for row in self.dataset.query(q):
+                iri = str(row.team)
+                abbrs.add(iri.split(":")[-1])
+        except Exception:
+            pass
+        return abbrs
 
     # ── Data helpers ──────────────────────────────────────────────────────────
 
@@ -274,10 +371,11 @@ class RecommendationEngine:
         rows = []
         for row in self.dataset.query(q):
             rows.append({
-                "game_iri" : str(row.game),
-                "home_abbr": self._abbr_from_iri(str(row.home)),
-                "away_abbr": self._abbr_from_iri(str(row.away)),
-                "status"   : str(row.status),
+                "game_iri"     : str(row.game),
+                "home_abbr"    : self._abbr_from_iri(str(row.home)),
+                "away_abbr"    : self._abbr_from_iri(str(row.away)),
+                "status"       : str(row.status),
+                "is_postseason": "holon:game" in str(row.game) and False,
             })
         return rows
 

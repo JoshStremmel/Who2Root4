@@ -105,6 +105,8 @@ def main() -> None:
             from_week    = args.from_week,
             through_week = args.through_week,
         )
+        if args.postseason:
+            ingester.ingest_postseason()
         ingester.print_summary()
 
         all_games    = ingester.all_games()
@@ -275,6 +277,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--team",          metavar="ABBR")
     p.add_argument("--dislikes",      metavar="ABBR", nargs="*")
     p.add_argument("--full-season",   action="store_true")
+    p.add_argument("--postseason",    action="store_true",
+                   help="Also ingest postseason rounds")
     p.add_argument("--season",        type=int)
     p.add_argument("--week",          type=int)
     p.add_argument("--from-week",     type=int, default=1)

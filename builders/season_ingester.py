@@ -37,9 +37,14 @@ from rdflib import XSD, Literal, URIRef
 
 from espn_fetcher import (
     fetch_scoreboard,
+    fetch_postseason_scoreboard,
     parse_scoreboard,
     parse_standings,
     fetch_standings,
+    SEASON_TYPE_REGULAR,
+    SEASON_TYPE_POSTSEASON,
+    POSTSEASON_WEEKS,
+    POSTSEASON_WEEKS_COUNT,
 )
 from rdf_builder import (
     NFL, GRAPH,
@@ -142,6 +147,49 @@ class SeasonIngester:
             len(self._weeks_loaded), len(self._all_games),
         )
 
+    def ingest_postseason(self) -> None:
+        """
+        Fetch and load all postseason rounds (Wild Card through Super Bowl).
+        Postseason games are stored in week-scoped named graphs with
+        week_label ("Wild Card", "Divisional", etc.) preserved in the
+        interior facts.
+        """
+        logger.info("Ingesting postseason for season %d …", self.season)
+
+        for week in range(1, POSTSEASON_WEEKS_COUNT + 1):
+            parsed = self._load_week(week,
+                                     season_type=SEASON_TYPE_POSTSEASON)
+            if parsed is None:
+                logger.debug("Postseason week %d: no data", week)
+                continue
+
+            games = parsed.get("games", [])
+            if not games:
+                logger.debug("Postseason week %d: empty, skipping", week)
+                continue
+
+            round_label = POSTSEASON_WEEKS.get(week, f"Postseason Week {week}")
+            logger.info("Postseason week %d (%s): %d games",
+                        week, round_label, len(games))
+
+            self.builder.add_teams_from_scoreboard(parsed)
+            self.builder.add_games(parsed)
+
+            # Track in team schedule for temporal edges
+            # Use offset weeks (100+) to keep postseason after regular season
+            offset_week = 100 + week
+            for game in games:
+                from rdf_builder import _game_iri
+                g_iri = _game_iri(game)
+                for side in ("home", "away"):
+                    abbr = game[side]["abbr"]
+                    self._team_schedule.setdefault(abbr, []).append(g_iri)
+
+            self._all_games.extend(games)
+            self._weeks_loaded.append(offset_week)
+
+        logger.info("Postseason ingestion complete.")
+
     def ingest_standings(self) -> list[dict]:
         """
         Fetch current standings, add to dataset, return parsed list.
@@ -236,32 +284,37 @@ class SeasonIngester:
 
     # ── Cache helpers ─────────────────────────────────────────────────────────
 
-    def _cache_path(self, week: int) -> Path:
-        return self.cache_dir / f"scoreboard_{self.season}_w{week:02d}.json"
+    def _cache_path(self, week: int,
+                    season_type: int = SEASON_TYPE_REGULAR) -> Path:
+        suffix = "post" if season_type == SEASON_TYPE_POSTSEASON else "reg"
+        return self.cache_dir / f"scoreboard_{self.season}_{suffix}_w{week:02d}.json"
 
-    def _load_week(self, week: int) -> dict[str, Any] | None:
+    def _load_week(self, week: int,
+                   season_type: int = SEASON_TYPE_REGULAR) -> dict[str, Any] | None:
         """
-        Return a parsed scoreboard dict for the given week.
+        Return a parsed scoreboard dict for the given week and season type.
         Uses disk cache if available and not force-refreshing.
         Returns None if ESPN returns an empty/future week.
         """
-        path = self._cache_path(week)
+        path = self._cache_path(week, season_type)
 
         if not self.force_refresh and path.exists():
-            logger.debug("Week %02d: cache hit %s", week, path)
+            logger.debug("Week %02d (type %d): cache hit %s", week, season_type, path)
             raw = json.loads(path.read_text())
         else:
-            logger.debug("Week %02d: fetching from ESPN …", week)
+            logger.debug("Week %02d (type %d): fetching from ESPN …",
+                         week, season_type)
             try:
-                raw = fetch_scoreboard(week=week, season=self.season)
+                raw = fetch_scoreboard(week=week, season=self.season,
+                                       season_type=season_type)
             except Exception as exc:
-                logger.warning("Week %02d: fetch failed (%s)", week, exc)
+                logger.warning("Week %02d (type %d): fetch failed (%s)",
+                               week, season_type, exc)
                 return None
             path.write_text(json.dumps(raw, indent=2))
 
         parsed = parse_scoreboard(raw)
 
-        # ESPN returns an empty events list for weeks that haven't been scheduled yet
         if not parsed.get("games"):
             return None
 
