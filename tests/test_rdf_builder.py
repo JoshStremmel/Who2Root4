@@ -138,12 +138,12 @@ class TestGameHolons:
         b.add_teams_from_scoreboard(parsed)
         b.add_games(parsed)
         ds = b.dataset
-        # Should have created a week graph for postseason
+        # Postseason week 1 graph uses "post" suffix: games:2025:post:01
         found = any(
-            "games:2025:1" in str(g.identifier)
+            "games:2025:post:01" in str(g.identifier)
             for g in ds.graphs()
         )
-        assert found, "Postseason week 1 graph not found"
+        assert found, "Postseason week 1 graph not found (expected games:2025:post:01)"
 
 
 # ── Competition edges ─────────────────────────────────────────────────────────
@@ -211,11 +211,11 @@ class TestImpactEdges:
         assert 1.0 in float_scores, "Divisional game should score 1.0"
 
     def test_no_impact_for_upcoming_games(self, loaded_builder):
-        # Pre-game and live games should NOT appear in outcomes graph
+        # Only completed games should appear in the outcomes graph as improveOdds subjects
+        # The BAL-CIN completed game should produce exactly one outcome
         g = loaded_builder._g_outcomes
-        # Only BAL-CIN was completed, so only one game outcome
-        outcomes = list(g.subjects(None, IMPACT.improvesOdds))
-        assert len(outcomes) >= 1  # at least one outcome exists
+        outcomes = list(g.subject_objects(IMPACT.improvesOdds))
+        assert len(outcomes) >= 1, "Expected at least one impact edge from the completed BAL-CIN game"
 
 
 # ── Playoff spot assignments ───────────────────────────────────────────────────

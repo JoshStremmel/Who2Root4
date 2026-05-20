@@ -69,8 +69,10 @@ def _outcome_iri(game: dict, winner_abbr: str) -> URIRef:
     return OUTCOME[f"{season}_W{week:02d}_{away}_{home}_{winner_abbr}Win"]
 
 
-def _week_graph_iri(season: int, week: int) -> URIRef:
-    return GRAPH[f"games:{season}:{week:02d}"]
+def _week_graph_iri(season: int, week: int,
+                    season_type_id: int = 2) -> URIRef:
+    suffix = "post" if season_type_id == 3 else "reg"
+    return GRAPH[f"games:{season}:{suffix}:{week:02d}"]
 
 
 # ── Core Builder ──────────────────────────────────────────────────────────────
@@ -157,9 +159,10 @@ class NFLGraphBuilder:
         Insert Game holons into week-scoped named graphs.
         Completed games also generate Outcome holons.
         """
-        season = parsed["season"]
-        week   = parsed["week"]
-        g_week = self.dataset.graph(_week_graph_iri(season, week))
+        season         = parsed["season"]
+        week           = parsed["week"]
+        season_type_id = parsed.get("season_type_id", 2)
+        g_week = self.dataset.graph(_week_graph_iri(season, week, season_type_id))
         self._bind_namespaces(g_week)
 
         for game in parsed.get("games", []):
@@ -438,7 +441,8 @@ class NFLGraphBuilder:
         # Register in holarchy
         self._g_holarchy.add((g_iri, RDF.type,    NFL.Game))
         self._g_holarchy.add((g_iri, NFL.hasInteriorGraph,
-                               _week_graph_iri(game["season"], game["week"])))
+                               _week_graph_iri(game["season"], game["week"],
+                                               game.get("season_type_id", 2))))
 
     def _insert_outcome(self, game: dict, game_iri: URIRef, g_week: Graph) -> None:
         winner_abbr = game["winner_abbr"]

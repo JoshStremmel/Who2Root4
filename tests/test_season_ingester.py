@@ -199,8 +199,8 @@ class TestTemporalEdges:
 
         from rdf_builder import NFL, _week_graph_iri
         g = ingester.builder._g_holarchy
-        w1_iri = _week_graph_iri(2025, 1)
-        w2_iri = _week_graph_iri(2025, 2)
+        w1_iri = _week_graph_iri(2025, 1, 2)   # regular season type = 2
+        w2_iri = _week_graph_iri(2025, 2, 2)
         next_edges = list(g.objects(w1_iri, NFL.nextGame))
         assert w2_iri in next_edges
 

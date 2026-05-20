@@ -245,8 +245,13 @@ class SeasonIngester:
         for i in range(len(self._weeks_loaded) - 1):
             this_week = self._weeks_loaded[i]
             next_week = self._weeks_loaded[i + 1]
-            this_iri  = _week_graph_iri(self.season, this_week)
-            next_iri  = _week_graph_iri(self.season, next_week)
+            # Postseason weeks are stored with offset 100+
+            this_type = 3 if this_week >= 100 else 2
+            next_type = 3 if next_week >= 100 else 2
+            this_real = this_week - 100 if this_week >= 100 else this_week
+            next_real = next_week - 100 if next_week >= 100 else next_week
+            this_iri  = _week_graph_iri(self.season, this_real, this_type)
+            next_iri  = _week_graph_iri(self.season, next_real, next_type)
             g.add((this_iri, NFL.nextGame,     next_iri))
             g.add((next_iri, NFL.previousGame, this_iri))
 

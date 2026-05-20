@@ -304,6 +304,17 @@ class ScenarioBuilder:
         mathematically eliminated from playoff contention.
         """
         conf = CONFERENCE_MAP.get(abbr, "")
+        div  = DIVISION_MAP.get(abbr, "")
+
+        # Division leaders cannot be eliminated — skip them entirely
+        div_rivals = [r for r in DIVISION_RIVALS.get(div, []) if r != abbr]
+        best_rival_wins = max(
+            (self.standings.get(r, {}).get("wins", 0) for r in div_rivals),
+            default=0,
+        )
+        if sd["wins"] > best_rival_wins:
+            return None  # team leads their division, not elimination candidate
+
         conf_teams = sorted(
             [s for s in self.standings.values() if CONFERENCE_MAP.get(s["abbr"]) == conf],
             key=lambda t: t["win_pct"],
@@ -340,7 +351,7 @@ class ScenarioBuilder:
             label           = label,
             beneficiary     = abbr,
             scenario_type   = "eliminated",
-            required_wins   = eliminators,   # these teams winning = bad for abbr
+            required_wins   = eliminators,
             required_losses = [],
             remaining_games = 0,
             is_active       = not already_eliminated,
