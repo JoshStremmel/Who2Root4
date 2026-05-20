@@ -128,9 +128,9 @@ class TestGameHolons:
 
     def test_week_graph_named_correctly(self, loaded_builder):
         ds = loaded_builder.dataset
-        week_graph_iri = URIRef("urn:nfl:graph:games:2025:14")
+        week_graph_iri = URIRef("urn:nfl:graph:games:2025:reg:14")
         g = ds.graph(week_graph_iri)
-        assert len(g) > 0, "Week 14 named graph should exist and have triples"
+        assert len(g) > 0, "Week 14 named graph should exist and have triples (urn:nfl:graph:games:2025:reg:14)"
 
     def test_postseason_game_parsed(self):
         b = NFLGraphBuilder()
