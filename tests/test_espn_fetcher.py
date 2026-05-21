@@ -63,6 +63,15 @@ class TestParseScoreboardStructure:
         result = parse_scoreboard(raw)
         assert result["games"] == []
 
+    def test_bare_integer_season_type(self):
+        """ESPN returns season.type as a bare int during the offseason."""
+        raw = make_raw_scoreboard(events=[])
+        raw["season"]["type"] = 2   # bare int, not a dict
+        result = parse_scoreboard(raw)
+        assert result["season_type_id"] == 2
+        assert result["season_type"] == "Regular Season"
+        assert result["is_postseason"] is False
+
 
 # ── parse_scoreboard: postseason ─────────────────────────────────────────────
 

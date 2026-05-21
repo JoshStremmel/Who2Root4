@@ -229,8 +229,20 @@ def parse_scoreboard(data: dict[str, Any]) -> dict[str, Any]:
 
     season_year     = season_data.get("year", 0)
     season_type_obj = season_data.get("type", {})
-    season_type_str = season_type_obj.get("name", "Unknown")
-    season_type_id  = season_type_obj.get("id", 2)
+
+    # ESPN returns season.type as either a dict {"id":2,"name":"Regular Season"}
+    # or a bare integer during the offseason
+    if isinstance(season_type_obj, dict):
+        season_type_str = season_type_obj.get("name", "Unknown")
+        season_type_id  = season_type_obj.get("id", 2)
+    else:
+        season_type_id  = int(season_type_obj) if season_type_obj else 2
+        season_type_str = {
+            1: "Preseason",
+            2: "Regular Season",
+            3: "Postseason",
+        }.get(season_type_id, "Unknown")
+
     try:
         season_type_id = int(season_type_id)
     except (TypeError, ValueError):
