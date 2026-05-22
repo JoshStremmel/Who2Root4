@@ -36,17 +36,17 @@ sys.path.insert(0, str(Path(__file__).parent / "queries"))
 
 from holonic import HolonicDataset
 
-from espn_fetcher import (
+from builders.espn_fetcher import (
     fetch_scoreboard, fetch_standings,
     parse_scoreboard, parse_standings,
 )
-from holonic_builder import NFLHolonicBuilder, _team_iri
-from membrane_validator import MembraneValidator
-from scenario_builder import ScenarioBuilder
-from season_ingester import SeasonIngester
-from rdf_builder import NFLGraphBuilder       # still used for SPARQL layer
-from recommendation_engine import RecommendationEngine
-from sparql_queries import (
+from builders.holonic_builder import NFLHolonicBuilder, _team_iri
+from builders.membrane_validator import MembraneValidator
+from builders.scenario_builder import ScenarioBuilder
+from builders.season_ingester import SeasonIngester
+from builders.rdf_builder import NFLGraphBuilder       # still used for SPARQL layer
+from builders.recommendation_engine import RecommendationEngine
+from queries.sparql_queries import (
     ALL_TEAMS, COMPLETED_GAMES, UPCOMING_GAMES, DIVISION_LEADERS,
     CURRENT_PLAYOFF_SEEDS, ALL_IMPACT_EDGES,
     ALL_ACTIVE_SCENARIOS, SCENARIOS_FOR_TEAM, DESTINY_CONTROL_GAMES,

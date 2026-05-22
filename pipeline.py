@@ -42,15 +42,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "builders"))
 sys.path.insert(0, str(Path(__file__).parent / "queries"))
 
-from espn_fetcher import (
+from builders.espn_fetcher import (
     fetch_scoreboard, fetch_standings,
     parse_scoreboard, parse_standings,
 )
-from rdf_builder import NFLGraphBuilder, GRAPH
-from scenario_builder import ScenarioBuilder
-from season_ingester import SeasonIngester
-from recommendation_engine import RecommendationEngine
-from sparql_queries import (
+from builders.rdf_builder import NFLGraphBuilder, GRAPH
+from builders.scenario_builder import ScenarioBuilder
+from builders.season_ingester import SeasonIngester
+from builders.recommendation_engine import RecommendationEngine
+from queries.sparql_queries import (
     ALL_TEAMS, COMPLETED_GAMES, UPCOMING_GAMES, DIVISION_LEADERS,
     CURRENT_PLAYOFF_SEEDS, ALL_IMPACT_EDGES, LIST_ALL_HOLONS,
     ALL_ACTIVE_SCENARIOS, SCENARIOS_FOR_TEAM, DESTINY_CONTROL_GAMES,
