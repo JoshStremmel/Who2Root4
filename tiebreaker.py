@@ -25,11 +25,11 @@ sys.path.insert(0, str(Path(__file__).parent / "queries"))
 
 from rdflib import RDF, XSD, Dataset, Literal, URIRef
 
-from espn_fetcher import (
+from builders.espn_fetcher import (
     CONFERENCE_MAP, DIVISION_MAP, DIVISION_RIVALS,
     fetch_scoreboard, fetch_standings, parse_scoreboard, parse_standings,
 )
-from rdf_builder import NFL, TEAM, GRAPH, _team_iri
+from builders.rdf_builder import NFL, TEAM, GRAPH, _team_iri
 
 logger = logging.getLogger(__name__)
 
@@ -722,7 +722,7 @@ def _find_differentiating_step(
 def _fetch_season_data(season: int,
                         cache_dir: Path) -> tuple[list[Team], list[Game]]:
     """Fetch/cache all regular-season games and standings for a season."""
-    from espn_fetcher import SEASON_TYPE_REGULAR, REGULAR_SEASON_WEEKS
+    from builders.espn_fetcher import SEASON_TYPE_REGULAR, REGULAR_SEASON_WEEKS
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     all_game_dicts: list[dict] = []
