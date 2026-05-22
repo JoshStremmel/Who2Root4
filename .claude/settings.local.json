@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python pipeline.py --team PIT --full-season --season 2025 --sim-week 17)",
+      "Bash(Select-String -Pattern \"\\(tiebreak|PIT|BAL|Division|Seed|Scenario|ERROR|Traceback\\)\")",
+      "Bash(python3 pipeline.py --team PIT --full-season --season 2025 --sim-week 17)",
+      "PowerShell(cd \"c:\\\\Users\\\\JoshuaStremmel\\\\Who2Root4\"; $output = python pipeline.py --team PIT --full-season --season 2025 --sim-week 17 2>&1; Write-Output \\($output | Select-Object -Last 80 | Out-String\\))",
+      "PowerShell(cd \"c:\\\\Users\\\\JoshuaStremmel\\\\Who2Root4\"; & \"C:\\\\Users\\\\JoshuaStremmel\\\\miniforge3\\\\python.exe\" pipeline.py --team PIT --full-season --season 2025 --sim-week 14 > pipeline_sw14.txt 2>&1; Write-Output \"exit: $LASTEXITCODE\")",
+      "Bash(/c/Users/JoshuaStremmel/miniforge3/python.exe pipeline.py --team BAL --full-season --season 2025 --sim-week 17)",
+      "Bash(/c/Users/JoshuaStremmel/miniforge3/python.exe pipeline.py --team PIT --full-season --season 2025 --sim-week 17)"
+    ]
+  }
+}

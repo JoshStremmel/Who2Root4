@@ -160,20 +160,29 @@ def main() -> None:
         builder.add_team_strengths(strength_map)
         print_strength_table(strength_map, parsed_standings or [])
 
-    builder.add_competition_edges()
+    # Resolve division tiebreakers before graph enrichment so everything
+    # downstream (competition edges, seeds, scenarios) uses consistent ordering.
+    div_tb_order: dict[str, list[str]] = {}
+    if parsed_standings:
+        div_tb_order = _resolve_division_tiebreakers(parsed_standings, all_games)
+
+    builder.add_competition_edges(tiebreaker_order=div_tb_order)
     builder.add_impact_edges(strength_map=strength_map if strength_map else None)
 
     if parsed_standings:
-        builder.add_playoff_spot_assignments()
+        builder.add_playoff_spot_assignments(tiebreaker_order=div_tb_order)
+        if div_tb_order:
+            _emit_tiebreaker_rdf(div_tb_order, parsed_standings, all_games, builder)
 
     # ── 3. Scenario holons ────────────────────────────────────────────────────
 
     scenario_builder: ScenarioBuilder | None = None
     if parsed_standings:
         scenario_builder = ScenarioBuilder(
-            dataset   = builder.dataset,
-            standings = parsed_standings,
-            games     = all_games,
+            dataset          = builder.dataset,
+            standings        = parsed_standings,
+            games            = all_games,
+            tiebreaker_order = div_tb_order,
         )
         scenario_builder.generate_clinch_scenarios()
         scenario_builder.generate_elimination_scenarios()
@@ -258,6 +267,86 @@ def main() -> None:
                     )
 
     logger.info("Pipeline complete.")
+
+
+def _resolve_division_tiebreakers(
+    parsed_standings: list[dict],
+    all_games: list[dict],
+) -> dict[str, list[str]]:
+    """
+    For every division, return teams ordered best-to-worst by the official NFL
+    division tiebreaker.  Teams with different win percentages keep their
+    record-based order; only same-pct groups are broken by the tiebreaker.
+
+    Returns: {division_key: [abbr_rank1, abbr_rank2, …]}
+    """
+    from collections import defaultdict
+    from tiebreaker import Team as TBTeam, Game as TBGame, resolve_division_tie
+
+    tb_teams = [TBTeam.from_standings_dict(sd) for sd in parsed_standings]
+    tb_games = [TBGame.from_dict(g) for g in all_games if g.get("status") == "post"]
+
+    by_div: dict[str, list[TBTeam]] = defaultdict(list)
+    for t in tb_teams:
+        by_div[t.division].append(t)
+
+    result: dict[str, list[str]] = {}
+    for div, teams in by_div.items():
+        by_pct: dict[float, list[TBTeam]] = defaultdict(list)
+        for t in teams:
+            by_pct[round(t.win_pct, 4)].append(t)
+
+        ordered: list[str] = []
+        for pct in sorted(by_pct.keys(), reverse=True):
+            group = by_pct[pct]
+            if len(group) > 1:
+                resolved = resolve_division_tie(group, tb_games, tb_teams)
+                ordered.extend(t.id for t in resolved)
+            else:
+                ordered.append(group[0].id)
+
+        result[div] = ordered
+        if any(len(g) > 1 for g in by_pct.values()):
+            logger.info("Division tiebreaker %s: %s", div, ordered)
+
+    return result
+
+
+def _emit_tiebreaker_rdf(
+    div_tb_order: dict[str, list[str]],
+    parsed_standings: list[dict],
+    all_games: list[dict],
+    builder,
+) -> None:
+    """Write nfl:tiebreakOver / nfl:tiebreakReason triples for tied division groups."""
+    from collections import defaultdict
+    from tiebreaker import (
+        Team as TBTeam, Game as TBGame,
+        emit_tiebreaker_triples, resolve_with_reasons,
+    )
+
+    tb_teams  = [TBTeam.from_standings_dict(sd) for sd in parsed_standings]
+    tb_games  = [TBGame.from_dict(g) for g in all_games if g.get("status") == "post"]
+    team_map  = {t.id: t for t in tb_teams}
+
+    by_div: dict[str, list[TBTeam]] = defaultdict(list)
+    for t in tb_teams:
+        by_div[t.division].append(t)
+
+    for _, abbrs in div_tb_order.items():
+        div_teams = [team_map[a] for a in abbrs if a in team_map]
+        by_pct: dict[float, list[TBTeam]] = defaultdict(list)
+        for t in div_teams:
+            by_pct[round(t.win_pct, 4)].append(t)
+
+        for group in by_pct.values():
+            if len(group) > 1:
+                ordered, reasons = resolve_with_reasons(
+                    group, tb_games, tb_teams, "division"
+                )
+                emit_tiebreaker_triples(
+                    ordered, reasons, builder.dataset, "division"
+                )
 
 
 def _current_season() -> int:

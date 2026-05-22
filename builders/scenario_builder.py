@@ -69,10 +69,12 @@ class ScenarioBuilder:
         dataset: Dataset,
         standings: list[dict],
         games: list[dict] | None = None,   # all parsed game dicts (any week)
+        tiebreaker_order: dict[str, list[str]] | None = None,
     ) -> None:
-        self.dataset   = dataset
-        self.standings = {s["abbr"]: s for s in standings}
-        self.games     = games or []
+        self.dataset         = dataset
+        self.standings       = {s["abbr"]: s for s in standings}
+        self.games           = games or []
+        self.tiebreaker_order = tiebreaker_order or {}
         self._g        = dataset.graph(GRAPH["scenarios"])
         self._g.bind("scenario", SCENARIO)
         self._g.bind("playoff",  PLAYOFF)
@@ -171,7 +173,12 @@ class ScenarioBuilder:
         print(f"{'='*65}")
 
         for sc in sorted(targets, key=lambda s: s.scenario_type):
-            status = "✓ ACTIVE" if sc.is_active else "✗ resolved"
+            if sc.is_active:
+                status = "+ ACTIVE"
+            elif sc.scenario_type == "eliminated":
+                status = "* ELIMINATED"
+            else:
+                status = "* CLINCHED"
             print(f"\n  [{status}] {sc.label}")
             print(f"           Type: {sc.scenario_type}")
             if sc.required_wins:
@@ -208,8 +215,12 @@ class ScenarioBuilder:
             rival_wins = rival_sd.get("wins", 0)
             rival_remaining = len(self._remaining.get(rival_abbr, []))
             rival_max = rival_wins + rival_remaining
-            if rival_max >= max_team_wins:
+            if rival_max > max_team_wins:
                 required_losses.append(rival_abbr)
+            elif rival_max == max_team_wins:
+                # Tied at the ceiling — only need their loss if they beat us in TB
+                if not self._team_wins_tiebreaker_over(abbr, rival_abbr, div):
+                    required_losses.append(rival_abbr)
 
         # Active if the team hasn't already clinched
         best_rival_wins = max(
@@ -265,6 +276,10 @@ class ScenarioBuilder:
             (self.standings.get(r, {}).get("wins", 0) for r in div_rivals), default=0
         )
         if sd["wins"] > best_rival:
+            return None  # leads division outright
+        # Tied with best rival but holds division lead by tiebreaker
+        div_order = self.tiebreaker_order.get(div, [])
+        if div_order and div_order[0] == abbr:
             return None  # division clinch is the relevant scenario
 
         # Teams currently ranked 8–10 who could jump into wildcard spots
@@ -356,6 +371,20 @@ class ScenarioBuilder:
             remaining_games = 0,
             is_active       = not already_eliminated,
         )
+
+    # ── Tiebreaker helpers ────────────────────────────────────────────────────
+
+    def _team_wins_tiebreaker_over(
+        self, abbr: str, rival_abbr: str, div: str
+    ) -> bool:
+        """Return True if abbr ranks ahead of rival_abbr in the division tiebreaker."""
+        order = self.tiebreaker_order.get(div, [])
+        if not order:
+            return False
+        try:
+            return order.index(abbr) < order.index(rival_abbr)
+        except ValueError:
+            return False
 
     # ── RDF writer ────────────────────────────────────────────────────────────
 

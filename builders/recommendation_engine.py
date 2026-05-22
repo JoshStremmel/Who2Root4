@@ -76,6 +76,7 @@ class RecommendationEngine:
         self.fav_div          = DIVISION_MAP.get(self.fav_abbr, "")
         self.fav_conf         = CONFERENCE_MAP.get(self.fav_abbr, "")
         self.current_week     = current_week
+        self._wins_cache: dict[str, int] = {}
         # Previous-season win counts keyed by team abbreviation (underdog fallback)
         self._prev_wins: dict[str, int] = {
             sd["abbr"]: sd["wins"]
@@ -88,7 +89,11 @@ class RecommendationEngine:
         """
         Score every upcoming (status=pre) or live (status=in) game
         and return a ranked list of RootingRecommendations.
+        Returns an empty list if the favorite team is eliminated from playoff contention.
         """
+        if self._is_playoff_eliminated(self.fav_abbr):
+            return []
+
         games = self._fetch_relevant_games()
         recs  = []
         for game_data in games:
@@ -133,11 +138,14 @@ class RecommendationEngine:
         print(f"\n{'='*65}")
         print(f"  ROOTING GUIDE for {fav_name} fans")
         print(f"{'='*65}")
+        if self._is_playoff_eliminated(self.fav_abbr):
+            print(f"  No suggestions — {fav_name} have been eliminated from playoff contention.")
+            return
         if not recs:
             print("  No actionable recommendations this week.")
             return
         for i, r in enumerate(recs, 1):
-            bar = "█" * int(r.score * 20)
+            bar = "#" * int(r.score * 20)
             print(f"\n  #{i}  Root for: {r.root_for_name:25s}  vs  {r.against_name}")
             print(f"      Score:    {r.score:.3f}  [{bar:<20}]")
             print(f"      Why:      {r.reasoning}")
@@ -153,8 +161,12 @@ class RecommendationEngine:
 
         Score components
         ────────────────
-        divisional_bonus   : 0.40  (opponent in same division as fav)
-        conference_bonus   : 0.20  (opponent in same conference)
+        divisional_bonus   : 0.20–0.40  (opponent in same division; full 0.40 only when
+                                         both fav and rival are still in title contention,
+                                         scaled by fav's closeness to the division lead;
+                                         falls back to 0.20 if title is out of reach)
+        conference_bonus   : 0.20  (opponent in same conference, or division rival after
+                                    division title is effectively decided)
         scenario_bonus     : 0.25  (game satisfies an active scenario requirement)
         dislike_bonus      : 0.15  (loathed team is involved)
         record_delta       : 0.10  (how close standings are)
@@ -210,6 +222,13 @@ class RecommendationEngine:
             against_abbr = home
             total_score  = away_score_val
 
+        # Skip if either team is eliminated — their result no longer affects the playoff picture
+        if not is_postseason and (
+            self._is_playoff_eliminated(root_abbr)
+            or self._is_playoff_eliminated(against_abbr)
+        ):
+            return None
+
         # Team-strength tiebreaker: gameImportance = base + 0.05 * avgTeamStrength
         avg_strength = (self._strength_score(home) + self._strength_score(away)) / 2
         total_score += 0.05 * avg_strength
@@ -253,7 +272,18 @@ class RecommendationEngine:
 
         # Divisional / conference impact
         if opp_div == self.fav_div:
-            score += 0.40
+            fav_contending = self._in_division_contention(self.fav_abbr)
+            opp_contending = self._in_division_contention(opponent)
+            if fav_contending and opp_contending:
+                # Title race still alive for both sides — scale by how close fav is to the lead
+                games_rem  = self._games_remaining()
+                fav_gb     = self._games_back(self.fav_abbr)
+                title_urgency = max(0.0, 1.0 - fav_gb / max(games_rem, 1))
+                score += 0.20 + 0.20 * title_urgency  # 0.20–0.40
+            else:
+                # Division title effectively out of reach for fav or rival —
+                # treat as a conference rival (wild-card implications only)
+                score += 0.20
         elif opp_conf == self.fav_conf:
             score += 0.20
 
@@ -299,7 +329,24 @@ class RecommendationEngine:
         if is_postseason:
             parts.append("postseason game — every result reshapes the bracket")
         elif opp_div == self.fav_div:
-            parts.append(f"{against_abbr} is a division rival — their loss directly helps")
+            fav_contending = self._in_division_contention(self.fav_abbr)
+            opp_contending = self._in_division_contention(against_abbr)
+            if fav_contending and opp_contending:
+                fav_gb    = self._games_back(self.fav_abbr)
+                games_rem = self._games_remaining()
+                parts.append(
+                    f"{against_abbr} is a division rival still in the title race "
+                    f"({fav_gb:.1f} GB, {games_rem} weeks left) — their loss directly helps"
+                )
+            else:
+                reason = (
+                    "division title out of reach for your team"
+                    if not self._in_division_contention(self.fav_abbr)
+                    else f"{against_abbr} eliminated from division title race"
+                )
+                parts.append(
+                    f"{against_abbr} is a division rival ({reason}) — their loss improves wild card odds"
+                )
         elif opp_conf == self.fav_conf:
             parts.append(f"{against_abbr} is a conference competitor — their loss improves wild card odds")
 
@@ -452,6 +499,67 @@ class RecommendationEngine:
             except (ValueError, TypeError):
                 pass
         return 0.5
+
+    def _wins(self, abbr: str) -> int:
+        if abbr in self._wins_cache:
+            return self._wins_cache[abbr]
+        q = f"""
+        PREFIX nfl: <urn:nfl:>
+        SELECT ?wins WHERE {{
+            GRAPH ?g {{ <urn:nfl:team:{abbr}> nfl:wins ?wins }}
+        }} LIMIT 1
+        """
+        result = 0
+        for row in self.dataset.query(q):
+            try:
+                result = int(str(row.wins))
+                break
+            except (ValueError, TypeError):
+                pass
+        self._wins_cache[abbr] = result
+        return result
+
+    def _is_playoff_eliminated(self, abbr: str) -> bool:
+        """
+        True if the team can no longer mathematically reach a top-7 seed in their conference.
+        A team is eliminated when 7 or more conference peers already have more wins than
+        the team's maximum possible win total (current wins + games remaining).
+        """
+        conf = CONFERENCE_MAP.get(abbr, "")
+        if not conf:
+            return False
+        games_rem    = self._games_remaining()
+        max_possible = self._wins(abbr) + games_rem
+        conf_peers   = [t for t, c in CONFERENCE_MAP.items() if c == conf and t != abbr]
+        teams_ahead  = sum(1 for t in conf_peers if self._wins(t) > max_possible)
+        return teams_ahead >= 7
+
+    def _games_back(self, abbr: str) -> float:
+        """Return the team's games-back from its division leader (0.0 = leader)."""
+        q = f"""
+        PREFIX nfl: <urn:nfl:>
+        SELECT ?gb WHERE {{
+            GRAPH ?g {{ <urn:nfl:team:{abbr}> nfl:gamesBack ?gb }}
+        }} LIMIT 1
+        """
+        for row in self.dataset.query(q):
+            try:
+                return float(str(row.gb))
+            except (ValueError, TypeError):
+                pass
+        return 0.0
+
+    def _games_remaining(self) -> int:
+        """Estimate regular-season games remaining based on current week.
+        current_week is the first unplayed (or in-progress) week, so weeks
+        current_week through 18 inclusive are all still live."""
+        if self.current_week is None:
+            return 9
+        return max(0, 19 - self.current_week)
+
+    def _in_division_contention(self, abbr: str) -> bool:
+        """True if the team can still mathematically win their division."""
+        return self._games_back(abbr) <= self._games_remaining()
 
     def _resolve_underdog(self, home: str, away: str, gd: dict) -> str | None:
         """

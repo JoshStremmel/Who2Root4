@@ -145,12 +145,13 @@ class NFLGraphBuilder:
             abbr = sd["abbr"]
             t_iri = _team_iri(abbr)
             g = self._team_interior_graph(abbr)
-            g.add((t_iri, NFL.wins,        Literal(sd["wins"],         datatype=XSD.integer)))
-            g.add((t_iri, NFL.losses,      Literal(sd["losses"],       datatype=XSD.integer)))
-            g.add((t_iri, NFL.ties,        Literal(sd["ties"],         datatype=XSD.integer)))
-            g.add((t_iri, NFL.winPct,      Literal(sd["win_pct"],      datatype=XSD.float)))
-            g.add((t_iri, NFL.pointsFor,   Literal(sd["points_for"],   datatype=XSD.integer)))
-            g.add((t_iri, NFL.pointsAgainst, Literal(sd["points_against"], datatype=XSD.integer)))
+            # Use set() so computed standings always replace any prior scoreboard values
+            g.set((t_iri, NFL.wins,          Literal(sd["wins"],          datatype=XSD.integer)))
+            g.set((t_iri, NFL.losses,        Literal(sd["losses"],        datatype=XSD.integer)))
+            g.set((t_iri, NFL.ties,          Literal(sd["ties"],          datatype=XSD.integer)))
+            g.set((t_iri, NFL.winPct,        Literal(sd["win_pct"],       datatype=XSD.float)))
+            g.set((t_iri, NFL.pointsFor,     Literal(sd["points_for"],    datatype=XSD.integer)))
+            g.set((t_iri, NFL.pointsAgainst, Literal(sd["points_against"], datatype=XSD.integer)))
             self._team_abbrs.add(abbr)
         logger.info("Enriched %d teams from standings", len(standings))
 
@@ -178,12 +179,12 @@ class NFLGraphBuilder:
             abbr  = sd["abbr"]
             t_iri = _team_iri(abbr)
             self._g_standings.add((t_iri, RDF.type, NFL.Team))
-            self._g_standings.add((t_iri, NFL.wins,   Literal(sd["wins"],   datatype=XSD.integer)))
-            self._g_standings.add((t_iri, NFL.losses, Literal(sd["losses"], datatype=XSD.integer)))
-            self._g_standings.add((t_iri, NFL.ties,   Literal(sd["ties"],   datatype=XSD.integer)))
-            self._g_standings.add((t_iri, NFL.winPct, Literal(sd["win_pct"], datatype=XSD.float)))
-            self._g_standings.add((t_iri, NFL.pointsFor,    Literal(sd["points_for"],    datatype=XSD.integer)))
-            self._g_standings.add((t_iri, NFL.pointsAgainst, Literal(sd["points_against"], datatype=XSD.integer)))
+            self._g_standings.set((t_iri, NFL.wins,          Literal(sd["wins"],          datatype=XSD.integer)))
+            self._g_standings.set((t_iri, NFL.losses,        Literal(sd["losses"],        datatype=XSD.integer)))
+            self._g_standings.set((t_iri, NFL.ties,          Literal(sd["ties"],          datatype=XSD.integer)))
+            self._g_standings.set((t_iri, NFL.winPct,        Literal(sd["win_pct"],       datatype=XSD.float)))
+            self._g_standings.set((t_iri, NFL.pointsFor,     Literal(sd["points_for"],    datatype=XSD.integer)))
+            self._g_standings.set((t_iri, NFL.pointsAgainst, Literal(sd["points_against"], datatype=XSD.integer)))
             div_key  = sd.get("division", DIVISION_MAP.get(abbr, ""))
             conf_key = sd.get("conference", CONFERENCE_MAP.get(abbr, ""))
             if div_key:
@@ -192,13 +193,17 @@ class NFLGraphBuilder:
                 self._g_standings.add((t_iri, NFL.conference, NFL[conf_key]))
         logger.info("Standings graph updated for %d teams", len(standings))
 
-    def add_competition_edges(self) -> None:
+    def add_competition_edges(
+        self,
+        tiebreaker_order: dict[str, list[str]] | None = None,
+    ) -> None:
         """
         Derive structural & competitive edges:
           - divisionalRival  (all 4-team division clusters)
           - competesWith     (same conference, alive teams)
-          - divisionLeader   (team with best record per division)
-          - gamesBack        (distance from division leader)
+          - divisionLeader   (team with best record per division; tiebreaker
+                              used when tiebreaker_order is provided)
+          - gamesBack        (distance from division leader by raw record)
         """
         g = self._g_competition
 
@@ -220,11 +225,19 @@ class NFLGraphBuilder:
                 by_div.setdefault(div, []).append(sd)
 
             for div_key, teams in by_div.items():
-                sorted_teams = sorted(
-                    teams,
-                    key=lambda t: (t["wins"] - t["losses"]),
-                    reverse=True
-                )
+                if tiebreaker_order and div_key in tiebreaker_order:
+                    tb_order = tiebreaker_order[div_key]
+                    sorted_teams = sorted(
+                        teams,
+                        key=lambda t: tb_order.index(t["abbr"])
+                                      if t["abbr"] in tb_order else 999,
+                    )
+                else:
+                    sorted_teams = sorted(
+                        teams,
+                        key=lambda t: (t["wins"] - t["losses"]),
+                        reverse=True,
+                    )
                 leader = sorted_teams[0]
                 leader_wins   = leader["wins"]
                 leader_losses = leader["losses"]
@@ -317,7 +330,10 @@ class NFLGraphBuilder:
                     Literal(data["strengthScore"], datatype=XSD.float)))
         logger.info("Team strength scores written for %d teams", len(strength_map))
 
-    def add_playoff_spot_assignments(self) -> None:
+    def add_playoff_spot_assignments(
+        self,
+        tiebreaker_order: dict[str, list[str]] | None = None,
+    ) -> None:
         """
         Assign nfl:currentlyHolds triples based on current standings.
         Top 4 per division → seeds 1–4. Next 3 best records per conf → wildcards.
@@ -336,9 +352,18 @@ class NFLGraphBuilder:
             div = sd.get("division", DIVISION_MAP.get(sd["abbr"], ""))
             by_div.setdefault(div, []).append(sd)
 
+        def _sort_div(teams: list[dict], div_key: str) -> list[dict]:
+            if tiebreaker_order and div_key in tiebreaker_order:
+                tb = tiebreaker_order[div_key]
+                return sorted(
+                    teams,
+                    key=lambda t: tb.index(t["abbr"]) if t["abbr"] in tb else 999,
+                )
+            return sorted(teams, key=lambda t: t["win_pct"], reverse=True)
+
         for div_key, teams in by_div.items():
             conf = "AFC" if "AFC" in div_key else "NFC"
-            sorted_t = sorted(teams, key=lambda t: t["win_pct"], reverse=True)
+            sorted_t = _sort_div(teams, div_key)
             conf_division_leaders[conf].append(sorted_t[0])
             conf_non_leaders[conf].extend(sorted_t[1:])
 
@@ -410,9 +435,10 @@ class NFLGraphBuilder:
         if td.get("short_name"):
             g.add((t_iri, RDFS.label,   Literal(td["short_name"])))
         if td.get("wins") is not None:
-            g.add((t_iri, NFL.wins,     Literal(td["wins"],   datatype=XSD.integer)))
-            g.add((t_iri, NFL.losses,   Literal(td["losses"], datatype=XSD.integer)))
-            g.add((t_iri, NFL.ties,     Literal(td["ties"],   datatype=XSD.integer)))
+            # Use set() so repeated calls per week don't accumulate multiple values
+            g.set((t_iri, NFL.wins,   Literal(td["wins"],   datatype=XSD.integer)))
+            g.set((t_iri, NFL.losses, Literal(td["losses"], datatype=XSD.integer)))
+            g.set((t_iri, NFL.ties,   Literal(td["ties"],   datatype=XSD.integer)))
 
         div_key  = td.get("division",  DIVISION_MAP.get(abbr, ""))
         conf_key = td.get("conference", CONFERENCE_MAP.get(abbr, ""))

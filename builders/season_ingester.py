@@ -126,8 +126,12 @@ class SeasonIngester:
                 logger.info("Week %d: empty scoreboard, skipping.", week)
                 continue
 
-            # Add teams and games into the dataset
-            self.builder.add_teams_from_scoreboard(parsed)
+            # Add teams and games into the dataset.
+            # In sim mode, skip add_teams_from_scoreboard for blanked weeks —
+            # ESPN's cached scoreboard carries real team records for those weeks,
+            # which would overwrite the correctly-derived sim standings.
+            if self.sim_week is None or week < self.sim_week:
+                self.builder.add_teams_from_scoreboard(parsed)
             self.builder.add_games(parsed)
 
             # Track game IRIs per team for temporal linking
@@ -271,7 +275,7 @@ class SeasonIngester:
         return list(self._all_games)
 
     def current_week(self) -> int | None:
-        """Return the current week: sim_week when in simulation mode, otherwise the last loaded week."""
+        """Return the current week (first unplayed in sim mode, last loaded otherwise)."""
         if self.sim_week is not None:
             return self.sim_week
         return self._weeks_loaded[-1] if self._weeks_loaded else None
