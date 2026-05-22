@@ -64,6 +64,7 @@ class RecommendationEngine:
         favorite_team_abbr: str,
         disliked_teams: list[str] | None = None,
         user_iri: str = "urn:nfl:user:default",
+        prev_season_standings: list[dict] | None = None,
     ) -> None:
         self.dataset          = dataset
         self.fav_abbr         = favorite_team_abbr.upper()
@@ -73,6 +74,11 @@ class RecommendationEngine:
         self.user_iri         = URIRef(user_iri)
         self.fav_div          = DIVISION_MAP.get(self.fav_abbr, "")
         self.fav_conf         = CONFERENCE_MAP.get(self.fav_abbr, "")
+        # Previous-season win counts keyed by team abbreviation (underdog fallback)
+        self._prev_wins: dict[str, int] = {
+            sd["abbr"]: sd["wins"]
+            for sd in (prev_season_standings or [])
+        }
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -185,7 +191,15 @@ class RecommendationEngine:
             is_postseason,
         )
 
-        if home_score_val >= away_score_val:
+        # Underdog tiebreaker: when odds (or prev-season record) reveal a clear underdog,
+        # add a tiny bonus to that side so the engine prefers rooting for them when
+        # the base scores are equal or near-equal.
+        underdog = self._resolve_underdog(home, away, gd)
+        _ud_bonus = 0.02
+        adj_home = home_score_val + (_ud_bonus if home == underdog else 0.0)
+        adj_away = away_score_val + (_ud_bonus if away == underdog else 0.0)
+
+        if adj_home >= adj_away:
             root_abbr    = home
             against_abbr = away
             total_score  = home_score_val
@@ -193,6 +207,10 @@ class RecommendationEngine:
             root_abbr    = away
             against_abbr = home
             total_score  = away_score_val
+
+        # Team-strength tiebreaker: gameImportance = base + 0.05 * avgTeamStrength
+        avg_strength = (self._strength_score(home) + self._strength_score(away)) / 2
+        total_score += 0.05 * avg_strength
 
         reasoning = self._build_reasoning(
             root_abbr, against_abbr,
@@ -354,10 +372,11 @@ class RecommendationEngine:
     # ── Data helpers ──────────────────────────────────────────────────────────
 
     def _fetch_relevant_games(self) -> list[dict[str, Any]]:
-        """Pull upcoming/live games from the dataset via SPARQL."""
+        """Pull upcoming/live games from the dataset via SPARQL, including odds."""
         q = """
         PREFIX nfl:  <urn:nfl:>
         SELECT ?game ?home ?away ?status
+               ?spread ?homeMoneyLine ?awayMoneyLine ?homeFavorite
         WHERE {
             GRAPH ?g {
                 ?game a nfl:Game ;
@@ -365,17 +384,25 @@ class RecommendationEngine:
                       nfl:awayTeam ?away ;
                       nfl:status   ?status .
                 FILTER(?status IN ("pre", "in"))
+                OPTIONAL { ?game nfl:spread        ?spread }
+                OPTIONAL { ?game nfl:homeMoneyLine ?homeMoneyLine }
+                OPTIONAL { ?game nfl:awayMoneyLine ?awayMoneyLine }
+                OPTIONAL { ?game nfl:homeFavorite  ?homeFavorite }
             }
         }
         """
         rows = []
         for row in self.dataset.query(q):
             rows.append({
-                "game_iri"     : str(row.game),
-                "home_abbr"    : self._abbr_from_iri(str(row.home)),
-                "away_abbr"    : self._abbr_from_iri(str(row.away)),
-                "status"       : str(row.status),
-                "is_postseason": "holon:game" in str(row.game) and False,
+                "game_iri"      : str(row.game),
+                "home_abbr"     : self._abbr_from_iri(str(row.home)),
+                "away_abbr"     : self._abbr_from_iri(str(row.away)),
+                "status"        : str(row.status),
+                "is_postseason" : False,
+                "spread"        : self._safe_float(row.spread),
+                "home_moneyline": self._safe_int_val(row.homeMoneyLine),
+                "away_moneyline": self._safe_int_val(row.awayMoneyLine),
+                "home_favorite" : self._safe_bool(row.homeFavorite),
             })
         return rows
 
@@ -403,6 +430,88 @@ class RecommendationEngine:
             except (ValueError, TypeError):
                 pass
         return 0.5
+
+    def _strength_score(self, abbr: str) -> float:
+        q = f"""
+        PREFIX nfl: <urn:nfl:>
+        SELECT ?score WHERE {{
+            GRAPH ?g {{ <urn:nfl:team:{abbr}> nfl:strengthScore ?score }}
+        }} LIMIT 1
+        """
+        for row in self.dataset.query(q):
+            try:
+                return float(str(row.score))
+            except (ValueError, TypeError):
+                pass
+        return 0.5
+
+    def _resolve_underdog(self, home: str, away: str, gd: dict) -> str | None:
+        """
+        Return the abbreviation of the underdog team for this game, or None.
+
+        Resolution order:
+          1. Point spread from ESPN odds   (negative = home favored)
+          2. Money-line comparison         (more negative = bigger favorite)
+          3. homeFavorite boolean from RDF
+          4. Previous season win counts    (more wins last year → stronger team)
+        """
+        spread = gd.get("spread")
+        hml    = gd.get("home_moneyline")
+        aml    = gd.get("away_moneyline")
+        hfav   = gd.get("home_favorite")
+
+        # 1. Spread — most direct signal; skip pick-em (spread == 0)
+        if spread is not None:
+            if spread < 0:
+                return away   # home favored → away is underdog
+            if spread > 0:
+                return home   # away favored → home is underdog
+
+        # 2. Money-line comparison — more negative = bigger favorite
+        if hml is not None and aml is not None:
+            if hml < aml:
+                return away
+            if aml < hml:
+                return home
+
+        # 3. ESPN homeFavorite flag
+        if hfav is not None:
+            return away if hfav else home
+
+        # 4. Previous-season record fallback
+        h_prev = self._prev_wins.get(home)
+        a_prev = self._prev_wins.get(away)
+        if h_prev is not None and a_prev is not None and h_prev != a_prev:
+            return away if h_prev > a_prev else home
+
+        return None  # genuinely indeterminate — no bonus applied
+
+    # ── Type-coercion helpers (SPARQL results are rdflib Literals) ────────────
+
+    @staticmethod
+    def _safe_float(val: Any) -> float | None:
+        try:
+            return float(str(val))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _safe_int_val(val: Any) -> int | None:
+        try:
+            return int(str(val))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _safe_bool(val: Any) -> bool | None:
+        if val is None:
+            return None
+        s = str(val).lower()
+        if s == "true":
+            return True
+        if s == "false":
+            return False
+        return None
 
     @staticmethod
     def _abbr_from_iri(iri: str) -> str:

@@ -43,13 +43,14 @@ sys.path.insert(0, str(Path(__file__).parent / "builders"))
 sys.path.insert(0, str(Path(__file__).parent / "queries"))
 
 from builders.espn_fetcher import (
-    fetch_scoreboard, fetch_standings,
+    fetch_scoreboard, fetch_standings, fetch_standings_season,
     parse_scoreboard, parse_standings,
 )
 from builders.rdf_builder import NFLGraphBuilder, GRAPH
 from builders.scenario_builder import ScenarioBuilder
 from builders.season_ingester import SeasonIngester
 from builders.recommendation_engine import RecommendationEngine
+from builders.team_strength import computeAllTeamStrengths, print_strength_table
 from queries.sparql_queries import (
     ALL_TEAMS, COMPLETED_GAMES, UPCOMING_GAMES, DIVISION_LEADERS,
     CURRENT_PLAYOFF_SEEDS, ALL_IMPACT_EDGES, LIST_ALL_HOLONS,
@@ -147,8 +148,14 @@ def main() -> None:
         builder.add_standings(parsed_standings)
         builder.add_teams_from_standings(parsed_standings)
 
+    # Compute team strength scores (used as tiebreaker in game importance)
+    strength_map = computeAllTeamStrengths(all_games, parsed_standings or [])
+    if strength_map:
+        builder.add_team_strengths(strength_map)
+        print_strength_table(strength_map, parsed_standings or [])
+
     builder.add_competition_edges()
-    builder.add_impact_edges()
+    builder.add_impact_edges(strength_map=strength_map if strength_map else None)
 
     if parsed_standings:
         builder.add_playoff_spot_assignments()
@@ -201,10 +208,24 @@ def main() -> None:
                 title=f"Scenarios — {args.team.upper()}",
             )
 
+        # Fetch previous season standings for underdog resolution fallback
+        prev_season_standings: list[dict] = []
+        try:
+            prev_season_year = (current_week and args.season or _current_season()) - 1
+            raw_prev = fetch_standings_season(prev_season_year)
+            prev_season_standings = parse_standings(raw_prev)
+            logger.info(
+                "Loaded %d teams from %d standings (underdog fallback)",
+                len(prev_season_standings), prev_season_year,
+            )
+        except Exception as exc:
+            logger.warning("Previous season standings unavailable (%s) — skipping underdog fallback", exc)
+
         engine = RecommendationEngine(
-            dataset            = ds,
-            favorite_team_abbr = args.team,
-            disliked_teams     = args.dislikes or [],
+            dataset               = ds,
+            favorite_team_abbr    = args.team,
+            disliked_teams        = args.dislikes or [],
+            prev_season_standings = prev_season_standings,
         )
         recs = engine.generate_recommendations()
         engine.print_recommendations(recs)

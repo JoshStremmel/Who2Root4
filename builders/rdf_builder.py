@@ -252,13 +252,17 @@ class NFLGraphBuilder:
 
         logger.info("Competition edges written to %s", GRAPH["competition"])
 
-    def add_impact_edges(self) -> None:
+    def add_impact_edges(
+        self,
+        strength_map: dict | None = None,
+    ) -> None:
         """
         Generate impact edges on completed game outcomes:
           - outcome:XWin impact:improvesOdds  winner_team
           - outcome:XWin impact:reducesOdds   loser_team
           - game impact:affects home/away teams
-        Scores are normalised [0.0 – 1.0] based on divisional/conference relevance.
+        Scores are normalised [0.0 – 1.0] based on divisional/conference relevance,
+        then bumped by 0.05 * avgTeamStrength so team quality breaks ties.
         """
         g = self._g_outcomes
         for game in self._game_data:
@@ -271,7 +275,7 @@ class NFLGraphBuilder:
 
             out_iri = _outcome_iri(game, winner_abbr)
 
-            # Impact score: divisional games matter more
+            # Base importance: divisional games matter more
             home_div = DIVISION_MAP.get(game["home"]["abbr"], "")
             away_div = DIVISION_MAP.get(game["away"]["abbr"], "")
             home_conf = CONFERENCE_MAP.get(game["home"]["abbr"], "")
@@ -284,10 +288,18 @@ class NFLGraphBuilder:
             else:
                 base_score = 0.4    # interconference
 
+            # Team-strength tiebreaker: gameImportance = base + 0.05 * avgStrength
+            if strength_map:
+                home_str = strength_map.get(game["home"]["abbr"], {}).get("strengthScore", 0.5)
+                away_str = strength_map.get(game["away"]["abbr"], {}).get("strengthScore", 0.5)
+                importance = base_score + 0.05 * ((home_str + away_str) / 2)
+            else:
+                importance = base_score
+
             g.add((out_iri, IMPACT.improvesOdds, _team_iri(winner_abbr)))
             g.add((out_iri, IMPACT.reducesOdds,  _team_iri(loser_abbr)))
             g.add((out_iri, IMPACT.score,
-                    Literal(round(base_score, 2), datatype=XSD.float)))
+                    Literal(round(importance, 4), datatype=XSD.float)))
 
             # Affect edges on the game node itself
             g_game_iri = _game_iri(game)
@@ -295,6 +307,15 @@ class NFLGraphBuilder:
             g.add((g_game_iri, IMPACT.affects, _team_iri(game["away"]["abbr"])))
 
         logger.info("Impact edges added for completed games")
+
+    def add_team_strengths(self, strength_map: dict) -> None:
+        """Write nfl:strengthScore to each team's interior graph."""
+        for abbr, data in strength_map.items():
+            t_iri = _team_iri(abbr)
+            g = self._team_interior_graph(abbr)
+            g.add((t_iri, NFL.strengthScore,
+                    Literal(data["strengthScore"], datatype=XSD.float)))
+        logger.info("Team strength scores written for %d teams", len(strength_map))
 
     def add_playoff_spot_assignments(self) -> None:
         """
@@ -433,6 +454,23 @@ class NFLGraphBuilder:
             g_week.add((g_iri, NFL.homeScore, Literal(game["home_score"], datatype=XSD.integer)))
         if game["away_score"] is not None:
             g_week.add((g_iri, NFL.awayScore, Literal(game["away_score"], datatype=XSD.integer)))
+
+        # Betting odds (present only for upcoming / live games)
+        odds = game.get("odds")
+        if odds:
+            g_week.add((g_iri, NFL.spread,
+                         Literal(odds["spread"], datatype=XSD.float)))
+            g_week.add((g_iri, NFL.homeFavorite,
+                         Literal(odds["home_is_favorite"], datatype=XSD.boolean)))
+            if odds["home_moneyline"] is not None:
+                g_week.add((g_iri, NFL.homeMoneyLine,
+                             Literal(odds["home_moneyline"], datatype=XSD.integer)))
+            if odds["away_moneyline"] is not None:
+                g_week.add((g_iri, NFL.awayMoneyLine,
+                             Literal(odds["away_moneyline"], datatype=XSD.integer)))
+            if odds.get("details"):
+                g_week.add((g_iri, NFL.oddsDetails,
+                             Literal(odds["details"])))
 
         # Completed game → outcome holon
         if game["status"] == "post" and game.get("winner_abbr"):

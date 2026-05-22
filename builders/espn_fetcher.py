@@ -180,6 +180,12 @@ def fetch_standings() -> dict[str, Any]:
     return _get(f"{BASE}/standings")
 
 
+def fetch_standings_season(season_year: int) -> dict[str, Any]:
+    """Fetch standings for a specific NFL season year (for prev-season fallback)."""
+    logger.info("Fetching standings for season %d", season_year)
+    return _get(f"{BASE}/standings", params={"dates": season_year})
+
+
 def fetch_team(team_id: str) -> dict[str, Any]:
     """Fetch detail for a single team."""
     return _get(f"{BASE}/teams/{team_id}")
@@ -307,6 +313,7 @@ def parse_scoreboard(data: dict[str, Any]) -> dict[str, Any]:
             "away_score"    : away_score,
             "winner_abbr"   : winner_abbr,
             "loser_abbr"    : loser_abbr,
+            "odds"          : _parse_odds(comp),
         }
         games.append(game)
 
@@ -401,3 +408,50 @@ def _safe_int(val: Any) -> int | None:
         return int(val)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_odds(comp: dict) -> dict[str, Any] | None:
+    """
+    Extract betting odds from a competition object.
+
+    ESPN returns odds inside competitions[0].odds[] (sorted by provider priority).
+    Returns None when the game has no odds data.
+
+    Returned dict:
+      spread          : float   — negative = home favored (e.g. -7.5)
+      home_moneyline  : int     — negative = favorite (e.g. -325)
+      away_moneyline  : int     — positive = underdog  (e.g. +260)
+      home_is_favorite: bool
+      home_is_underdog: bool
+      details         : str     — e.g. "KC -7.5"
+    """
+    odds_list = comp.get("odds", [])
+    if not odds_list:
+        return None
+
+    # Use first entry (highest-priority provider, usually ESPN BET)
+    o = odds_list[0]
+    spread = o.get("spread")
+    if spread is None:
+        return None
+
+    home_o = o.get("homeTeamOdds", {})
+    away_o = o.get("awayTeamOdds", {})
+
+    home_ml = _safe_int(home_o.get("moneyLine"))
+    away_ml = _safe_int(away_o.get("moneyLine"))
+
+    # ESPN sometimes omits the favorite/underdog booleans; infer from moneyline if needed
+    if home_ml is not None and away_ml is not None:
+        home_is_fav = home_ml < away_ml
+    else:
+        home_is_fav = bool(home_o.get("favorite", False))
+
+    return {
+        "spread"          : float(spread),
+        "home_moneyline"  : home_ml,
+        "away_moneyline"  : away_ml,
+        "home_is_favorite": home_is_fav,
+        "home_is_underdog": not home_is_fav,
+        "details"         : o.get("details", ""),
+    }
