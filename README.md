@@ -1,18 +1,15 @@
-# nfl_holonic
+# Who2Root4
 
-**ESPN → Holonic RDF Knowledge Graph** for NFL playoff reasoning.
+**Tell it your team. It tells you who to root for.**
 
-Converts live NFL data from the ESPN public API into a semantic, quad-store–ready
-knowledge graph using the `holonic` four-graph model (interior / boundary / projection / context).
+Who2Root4 pulls live NFL data from the ESPN public API, builds a semantic RDF knowledge graph using the [holonic](https://pypi.org/project/holonic/) four-graph model, applies official NFL tiebreaker logic, and outputs a ranked list of games you should care about this week — and which team to cheer for in each.
 
 ---
 
 ## Install
 
 ```bash
-pip install rdflib requests
-# or if you want the full holonic dataset backend:
-pip install holonic rdflib requests
+pip install -r requirements.txt
 ```
 
 ---
@@ -20,20 +17,44 @@ pip install holonic rdflib requests
 ## Quick Start
 
 ```bash
-# Current week — Steelers fan
-python pipeline.py --team PIT
+# Current week — Bengals fan
+python pipeline.py --team CIN
 
-# Specific week, save the graph
-python pipeline.py --team PIT --week 14 --season 2025 --output holarchy.trig
+# Full season with playoff scenario analysis
+python pipeline.py --team CIN --full-season
 
-# Also dump each named graph as individual Turtle files
-python pipeline.py --team PIT --output holarchy.trig --dump-graphs
+# Full season through a specific week
+python pipeline.py --team CIN --full-season --through-week 14 --season 2025
+
+# Include postseason rounds (Wild Card → Super Bowl)
+python pipeline.py --team CIN --full-season --postseason
+
+# Simulate standings as of week 12 (blanks results for weeks ≥ 12)
+python pipeline.py --team CIN --full-season --sim-week 12
 
 # Dislikes also affect recommendation scores
-python pipeline.py --team PIT --dislikes BAL CLE --output holarchy.trig
+python pipeline.py --team CIN --dislikes BAL CLE
 
-# Offline mode (use saved ESPN JSON)
-python pipeline.py --team PIT --json-file espn_data.json
+# Save graph to TriG, also dump per-named-graph Turtle files
+python pipeline.py --team CIN --full-season --output holarchy.trig --dump-graphs
+
+# Dry-run: load from saved ESPN JSON (no network)
+python pipeline.py --team CIN --json-file espn_data.json
+
+# Force re-fetch even if cache exists
+python pipeline.py --team CIN --full-season --force-refresh
+```
+
+---
+
+## Tiebreaker CLI
+
+```bash
+# Resolve a division tie
+python tiebreaker.py --conference AFC --division North
+
+# Resolve wild card bubble
+python tiebreaker.py --wildcard AFC
 ```
 
 ---
@@ -41,27 +62,40 @@ python pipeline.py --team PIT --json-file espn_data.json
 ## File Layout
 
 ```text
-nfl_holonic/
+Who2Root4/
 ├── pipeline.py                          # Orchestration entry point
+├── tiebreaker.py                        # Standalone NFL tiebreaker CLI
 ├── requirements.txt
 │
 ├── ontology/                            # OWL 2 / RDF vocabularies
-│   ├── core.ttl                         # Team, Game, Outcome, User, structural edges
-│   ├── competition.ttl                  # Competitive edge properties
-│   └── playoff_impact_recommendation.ttl # PlayoffSpot, Scenario, Impact, Recommendation
+│   ├── core.ttl
+│   ├── competition.ttl
+│   └── playoff_impact_recommendation.ttl
 │
 ├── builders/
 │   ├── espn_fetcher.py                  # ESPN API → normalised Python dicts
 │   ├── rdf_builder.py                   # Dicts → holonic rdflib Dataset
-│   └── recommendation_engine.py         # Graph reasoning → rooting recommendations
+│   ├── season_ingester.py               # Multi-week ingestion with disk cache
+│   ├── scenario_builder.py              # Clinch / elimination scenario holons
+│   ├── recommendation_engine.py         # Graph reasoning → rooting recommendations
+│   ├── team_strength.py                 # Multi-signal team strength scoring
+│   └── membrane_validator.py            # SHACL / boundary validation
 │
-└── queries/
-    └── sparql_queries.py                # Named SPARQL queries + run_query() helper
+├── queries/
+│   └── sparql_queries.py                # Named SPARQL queries + run_query() helper
+│
+└── tests/
 ```
 
 ---
 
-## Named Graphs (the Four-Layer Holonic Model)
+## How It Works
+
+### 1 — Ingest
+`espn_fetcher.py` pulls scoreboard and standings from the ESPN public API. In `--full-season` mode, `season_ingester.py` fetches all weeks (with a local JSON cache) and can simulate any mid-season state with `--sim-week`.
+
+### 2 — Build the Graph
+`rdf_builder.py` turns the normalised Python dicts into a holonic RDF `Dataset` with named graphs:
 
 | Named Graph IRI                     | Layer      | Contents                                  |
 |-------------------------------------|------------|--------------------------------------------|
@@ -70,50 +104,37 @@ nfl_holonic/
 | `urn:nfl:graph:outcomes`            | Interior   | Completed game outcomes + impact edges     |
 | `urn:nfl:graph:competition`         | Interior   | Structural & competitive edges             |
 | `urn:nfl:graph:standings`           | Interior   | Standings snapshot + playoff assignments   |
+| `urn:nfl:graph:scenarios`           | Interior   | Active clinch / elimination scenario holons|
+| `urn:nfl:graph:tiebreakers`         | Interior   | Tiebreaker order + reasons                 |
 | `urn:nfl:graph:holarchy`            | Context    | Registry of all holons + their graph IRIs  |
 | `urn:nfl:graph:recommendations`     | Projection | User-specific rooting recommendations      |
 | (default graph)                     | Boundary   | Ontology / SHACL shapes                    |
 
+### 3 — Tiebreakers
+`tiebreaker.py` implements the full official NFL division and wild-card tiebreaker procedure (head-to-head, division record, common games, conference record, strength of victory/schedule, combined ranking, net points, net touchdowns). Results are written into `graph:tiebreakers` as `nfl:tiebreakOver` / `nfl:tiebreakReason` triples.
+
+### 4 — Scenarios
+`scenario_builder.py` generates clinch and elimination scenario holons — concrete sets of results that would seal a playoff spot or knock a team out — and links them to the relevant impact edges.
+
+### 5 — Recommendations
+`recommendation_engine.py` queries the graph with SPARQL and scores every upcoming game on several signals (divisional urgency, active scenario requirements, disliked teams, standings proximity, team strength). The highest-scoring game is the one you should care about most, and the recommended team is the side whose win helps your team the most.
+
 ---
 
-## Example SPARQL Queries
+## Example Output
 
-All queries are importable from `queries/sparql_queries.py`.
-
-### Games that help the Steelers
-
-```sparql
-PREFIX impact: <urn:nfl:impact:>
-PREFIX nfl:    <urn:nfl:>
-
-SELECT ?outcome ?winnerName ?impactScore WHERE {
-    GRAPH <urn:nfl:graph:outcomes> {
-        ?outcome a nfl:Outcome ;
-                 impact:improvesOdds <urn:nfl:team:PIT> ;
-                 nfl:winner ?winner .
-        OPTIONAL { ?outcome impact:score ?impactScore }
-    }
-    GRAPH ?t { ?winner nfl:name ?winnerName }
-}
-ORDER BY DESC(?impactScore)
 ```
+================================================================
+  ROOTING GUIDE for Cincinnati Bengals fans
+================================================================
 
-### Who should I root for? (the inference rule)
+  #1  Root for: New York Jets              vs  Buffalo Bills
+      Score:    0.782  [################    ]
+      Why:      BUF is a division rival still in the title race (1.0 GB, 5 weeks left) — their loss directly helps; BUF losing satisfies an active clinch scenario requirement (score 0.78)
 
-```sparql
-PREFIX nfl: <urn:nfl:>
-PREFIX rec: <urn:nfl:recommendation:>
-
-SELECT ?rootFor ?against ?score ?reasoning WHERE {
-    GRAPH <urn:nfl:graph:recommendations> {
-        ?r a nfl:Recommendation ;
-           nfl:rootFor ?rootFor ;
-           nfl:against ?against ;
-           nfl:recommendationScore ?score ;
-           nfl:reasoning ?reasoning .
-    }
-}
-ORDER BY DESC(?score)
+  #2  Root for: Houston Texans             vs  Pittsburgh Steelers
+      Score:    0.621  [############        ]
+      Why:      PIT is a conference competitor — their loss improves wild card odds (score 0.62)
 ```
 
 ---
@@ -122,8 +143,6 @@ ORDER BY DESC(?score)
 
 ### Swap in Apache Jena Fuseki
 
-Replace the `rdflib` backend with `holonic`'s `FusekiBackend`:
-
 ```python
 from holonic.backends.fuseki_backend import FusekiBackend
 from holonic import HolonicDataset
@@ -131,59 +150,14 @@ from holonic import HolonicDataset
 ds = HolonicDataset(backend=FusekiBackend("http://localhost:3030", dataset="nfl"))
 ```
 
-Then pass `ds.dataset` (or the backend's native dataset) to `NFLGraphBuilder`.
+Pass `ds.dataset` to `NFLGraphBuilder`.
 
-### Add Scenario Nodes
-
-```python
-from rdflib import URIRef, RDF, Namespace
-
-PLAYOFF = Namespace("urn:nfl:playoff:")
-ds.graph("urn:nfl:graph:scenarios").add((
-    URIRef("urn:nfl:scenario:SteelersClinch"),
-    RDF.type,
-    PLAYOFF.Scenario,
-))
-```
-
-### Add User Preferences
+### Add User Preferences Directly
 
 ```python
-from rdf_builder import USER, NFL, _team_iri
+from builders.rdf_builder import USER, NFL, _team_iri
+
 user_g = builder.dataset.graph("urn:nfl:graph:users")
-user_g.add((USER["josh"], NFL.favoriteTeam, _team_iri("PIT")))
+user_g.add((USER["josh"], NFL.favoriteTeam, _team_iri("CIN")))
 user_g.add((USER["josh"], NFL.dislikes,     _team_iri("BAL")))
 ```
-
----
-
-## Architecture
-
-```text
-ESPN API
-   │
-   ▼
-espn_fetcher.py        ← HTTP → normalised Python dicts
-   │
-   ▼
-rdf_builder.py         ← dicts → rdflib Dataset (named graphs)
-   │
-   ├── ontology/*.ttl    ← loaded into default graph (boundary layer)
-   │
-   ├── graph:team:*      ← interior: per-team holons
-   ├── graph:games:*     ← interior: game holons (week-scoped)
-   ├── graph:outcomes    ← interior: outcomes + impact edges
-   ├── graph:competition ← interior: rivalry / competitive edges
-   ├── graph:standings   ← interior: standings snapshot
-   └── graph:holarchy    ← context: holon registry
-           │
-           ▼
-   recommendation_engine.py   ← SPARQL → scoring → graph:recommendations
-           │
-           ▼
-   sparql_queries.py          ← query library + print_results()
-           │
-           ▼
-   pipeline.py                ← CLI entry point, serialize → .trig
-```
-
