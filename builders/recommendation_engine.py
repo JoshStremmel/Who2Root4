@@ -65,6 +65,7 @@ class RecommendationEngine:
         disliked_teams: list[str] | None = None,
         user_iri: str = "urn:nfl:user:default",
         prev_season_standings: list[dict] | None = None,
+        current_week: int | None = None,
     ) -> None:
         self.dataset          = dataset
         self.fav_abbr         = favorite_team_abbr.upper()
@@ -74,6 +75,7 @@ class RecommendationEngine:
         self.user_iri         = URIRef(user_iri)
         self.fav_div          = DIVISION_MAP.get(self.fav_abbr, "")
         self.fav_conf         = CONFERENCE_MAP.get(self.fav_abbr, "")
+        self.current_week     = current_week
         # Previous-season win counts keyed by team abbreviation (underdog fallback)
         self._prev_wins: dict[str, int] = {
             sd["abbr"]: sd["wins"]
@@ -373,23 +375,29 @@ class RecommendationEngine:
 
     def _fetch_relevant_games(self) -> list[dict[str, Any]]:
         """Pull upcoming/live games from the dataset via SPARQL, including odds."""
-        q = """
+        week_filter = (
+            f"FILTER(?week = {self.current_week})"
+            if self.current_week is not None else ""
+        )
+        q = f"""
         PREFIX nfl:  <urn:nfl:>
         SELECT ?game ?home ?away ?status
                ?spread ?homeMoneyLine ?awayMoneyLine ?homeFavorite
-        WHERE {
-            GRAPH ?g {
+        WHERE {{
+            GRAPH ?g {{
                 ?game a nfl:Game ;
                       nfl:homeTeam ?home ;
                       nfl:awayTeam ?away ;
-                      nfl:status   ?status .
+                      nfl:status   ?status ;
+                      nfl:week     ?week .
                 FILTER(?status IN ("pre", "in"))
-                OPTIONAL { ?game nfl:spread        ?spread }
-                OPTIONAL { ?game nfl:homeMoneyLine ?homeMoneyLine }
-                OPTIONAL { ?game nfl:awayMoneyLine ?awayMoneyLine }
-                OPTIONAL { ?game nfl:homeFavorite  ?homeFavorite }
-            }
-        }
+                {week_filter}
+                OPTIONAL {{ ?game nfl:spread        ?spread }}
+                OPTIONAL {{ ?game nfl:homeMoneyLine ?homeMoneyLine }}
+                OPTIONAL {{ ?game nfl:awayMoneyLine ?awayMoneyLine }}
+                OPTIONAL {{ ?game nfl:homeFavorite  ?homeFavorite }}
+            }}
+        }}
         """
         rows = []
         for row in self.dataset.query(q):

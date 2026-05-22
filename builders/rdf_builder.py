@@ -286,13 +286,13 @@ class NFLGraphBuilder:
             elif home_conf == away_conf:
                 base_score = 0.75   # conference
             else:
-                base_score = 0.4    # interconference
+                base_score = 0.5    # interconference
 
-            # Team-strength tiebreaker: gameImportance = base + 0.05 * avgStrength
+            # Team-strength tiebreaker: gameImportance = base + 0.05 * avgStrength, capped at 1.0
             if strength_map:
                 home_str = strength_map.get(game["home"]["abbr"], {}).get("strengthScore", 0.5)
                 away_str = strength_map.get(game["away"]["abbr"], {}).get("strengthScore", 0.5)
-                importance = base_score + 0.05 * ((home_str + away_str) / 2)
+                importance = min(base_score + 0.05 * ((home_str + away_str) / 2), 1.0)
             else:
                 importance = base_score
 

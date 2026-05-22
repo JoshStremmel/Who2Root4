@@ -72,12 +72,14 @@ class SeasonIngester:
         cache_dir:     str | Path = ".cache/espn",
         request_delay: float = DEFAULT_REQUEST_DELAY,
         force_refresh: bool  = False,
+        sim_week:      int | None = None,
     ) -> None:
         self.builder       = builder
         self.season        = season
         self.cache_dir     = Path(cache_dir)
         self.request_delay = request_delay
         self.force_refresh = force_refresh
+        self.sim_week      = sim_week
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -113,6 +115,11 @@ class SeasonIngester:
             if parsed is None:
                 logger.info("Week %d: no data available yet, stopping.", week)
                 break
+
+            if self.sim_week is not None and week >= self.sim_week:
+                parsed = self._blank_future_games(parsed)
+                logger.debug("Week %02d: results blanked (sim mode, sim_week=%d)",
+                             week, self.sim_week)
 
             games = parsed.get("games", [])
             if not games:
@@ -264,7 +271,9 @@ class SeasonIngester:
         return list(self._all_games)
 
     def current_week(self) -> int | None:
-        """Return the most recently loaded week number, or None."""
+        """Return the current week: sim_week when in simulation mode, otherwise the last loaded week."""
+        if self.sim_week is not None:
+            return self.sim_week
         return self._weeks_loaded[-1] if self._weeks_loaded else None
 
     def print_summary(self) -> None:
@@ -286,6 +295,70 @@ class SeasonIngester:
         print(f"    Live       : {live}")
         print(f"  Teams tracked: {len(self._team_schedule)}")
         print()
+
+    def compute_standings_from_games(self) -> list[dict]:
+        """
+        Derive standings from completed games loaded so far.
+        Used in simulation mode so standings reflect the simulated point in time
+        rather than the live ESPN standings endpoint.
+        """
+        from espn_fetcher import DIVISION_MAP, CONFERENCE_MAP
+
+        records: dict[str, dict] = {}
+
+        for game in self._all_games:
+            if game["status"] != "post":
+                continue
+            for side, opp_side in [("home", "away"), ("away", "home")]:
+                team = game[side]
+                abbr = team["abbr"]
+                if abbr not in records:
+                    records[abbr] = {
+                        "abbr": abbr,
+                        "name": team["name"],
+                        "wins": 0, "losses": 0, "ties": 0,
+                        "points_for": 0, "points_against": 0,
+                    }
+                r = records[abbr]
+                r["points_for"]     += game.get(f"{side}_score") or 0
+                r["points_against"] += game.get(f"{opp_side}_score") or 0
+                if game["winner_abbr"] == abbr:
+                    r["wins"] += 1
+                elif game["loser_abbr"] == abbr:
+                    r["losses"] += 1
+                elif game["winner_abbr"] is None:
+                    r["ties"] += 1
+
+        result = []
+        for abbr, r in records.items():
+            total = r["wins"] + r["losses"] + r["ties"]
+            win_pct = round((r["wins"] + 0.5 * r["ties"]) / total, 4) if total else 0.0
+            result.append({
+                **r,
+                "win_pct"  : win_pct,
+                "division" : DIVISION_MAP.get(abbr, ""),
+                "conference": CONFERENCE_MAP.get(abbr, ""),
+            })
+
+        logger.info(
+            "Computed standings from completed games: %d teams", len(result)
+        )
+        return result
+
+    def _blank_future_games(self, parsed: dict) -> dict:
+        """Return a copy of a parsed scoreboard with all game results stripped."""
+        blanked_games = []
+        for game in parsed.get("games", []):
+            blanked_games.append({
+                **game,
+                "status"      : "pre",
+                "status_detail": "Scheduled",
+                "home_score"  : None,
+                "away_score"  : None,
+                "winner_abbr" : None,
+                "loser_abbr"  : None,
+            })
+        return {**parsed, "games": blanked_games}
 
     # ── Cache helpers ─────────────────────────────────────────────────────────
 

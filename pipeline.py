@@ -93,10 +93,13 @@ def main() -> None:
             season        = season,
             cache_dir     = args.cache_dir,
             force_refresh = args.force_refresh,
+            sim_week      = args.sim_week,
         )
         ingester.ingest(
             from_week    = args.from_week,
-            through_week = args.through_week,
+            # In sim mode, fetch all weeks so the full schedule is visible;
+            # the ingester blanks results for weeks >= sim_week.
+            through_week = args.through_week if not args.sim_week else 18,
         )
         if args.postseason:
             ingester.ingest_postseason()
@@ -107,7 +110,10 @@ def main() -> None:
         all_games    = ingester.all_games()
         current_week = ingester.current_week()
 
-        parsed_standings = ingester.ingest_standings()
+        if args.sim_week:
+            parsed_standings = ingester.compute_standings_from_games()
+        else:
+            parsed_standings = ingester.ingest_standings()
 
     else:
         # ── Single-week path ──────────────────────────────────────────────────
@@ -226,6 +232,7 @@ def main() -> None:
             favorite_team_abbr    = args.team,
             disliked_teams        = args.dislikes or [],
             prev_season_standings = prev_season_standings,
+            current_week          = current_week,
         )
         recs = engine.generate_recommendations()
         engine.print_recommendations(recs)
@@ -284,6 +291,8 @@ def _parse_args() -> argparse.Namespace:
                    help="First week to ingest in full-season mode (default: 1)")
     p.add_argument("--through-week",  type=int,
                    help="Last week to ingest in full-season mode (default: current)")
+    p.add_argument("--sim-week",      type=int,
+                   help="Simulate standing at this week: weeks >= sim-week are treated as not yet played")
 
     # Cache
     p.add_argument("--cache-dir",     metavar="PATH", default=".cache/espn",
