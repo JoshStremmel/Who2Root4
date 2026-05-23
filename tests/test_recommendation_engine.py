@@ -303,3 +303,67 @@ class TestPrintOutput:
         cin_engine.print_recommendations([])
         captured = capsys.readouterr()
         assert "No actionable" in captured.out
+
+
+# ── Wildcard path gating ──────────────────────────────────────────────────────
+
+class TestWildcardPathGating:
+    """
+    A team whose wildcard path is blocked (3+ non-division peers already
+    exceed its max wins) should not receive conference-rival-based suggestions
+    or reasoning that mentions 'wild card odds'.
+    """
+
+    def test_has_wildcard_path_true_for_bubble_team(self, full_dataset):
+        # CIN at 9-4 with max 9: only KC (11) and BUF (10) from other divisions
+        # exceed the max → 2 blockers < 3 → wildcard still alive
+        engine = RecommendationEngine(full_dataset, "CIN", current_week=14)
+        assert engine._has_wildcard_path() is True
+
+    def test_has_wildcard_path_false_when_three_blockers(self, full_dataset):
+        # Inject wins directly into the cache to simulate 3 non-division blockers.
+        # CIN at 9 wins (current_week=14 → 5 remaining → max=14).
+        # Setting three other-division teams to 15 wins puts them all > 14.
+        engine = RecommendationEngine(full_dataset, "CIN", current_week=14)
+        engine._wins_cache["KC"]  = 15   # AFCWest
+        engine._wins_cache["BUF"] = 15   # AFCEast
+        engine._wins_cache["LAC"] = 15   # AFCWest
+        assert engine._has_wildcard_path() is False
+
+    def test_no_wildcard_reasoning_when_path_blocked(self, full_dataset):
+        # Same setup — verify 'wild card odds' doesn't appear in reasoning
+        engine = RecommendationEngine(full_dataset, "CIN", current_week=14)
+        engine._wins_cache["KC"]  = 15
+        engine._wins_cache["BUF"] = 15
+        engine._wins_cache["LAC"] = 15
+        assert not engine._has_wildcard_path()
+
+        result = engine._score_game({
+            "game_iri"     : "urn:nfl:game:test_wc",
+            "home_abbr"    : "KC",
+            "away_abbr"    : "BUF",
+            "status"       : "pre",
+            "is_postseason": False,
+        })
+        if result:
+            assert "wild card" not in result.reasoning.lower(), \
+                "Should not mention wild card when team has no wildcard path"
+
+    def test_conference_score_zero_when_no_wc_path(self, full_dataset):
+        from rdf_builder import NFL, GRAPH, _team_iri
+        from rdflib import Literal, XSD
+        ds = full_dataset
+        g  = ds.graph(GRAPH["standings"])
+        for abbr in ("KC", "BUF", "LAC"):
+            g.set((_team_iri(abbr), NFL.wins, Literal(15, datatype=XSD.integer)))
+
+        engine = RecommendationEngine(ds, "CIN", current_week=14)
+        # With no wildcard path, the conference bonus for a non-division AFC game should be 0
+        score = engine._score_for(
+            "DEN", "KC",                       # root for DEN against KC
+            "AFCWest", "AFC",
+            set(), set(),
+            is_postseason=False, has_wc_path=False,
+        )
+        # Conference bonus (0.20) should not be applied; only record_delta remains
+        assert score < 0.15, f"Expected near-zero conference score, got {score}"

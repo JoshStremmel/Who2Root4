@@ -51,7 +51,7 @@ class Scenario:
     iri:            str
     label:          str
     beneficiary:    str          # team abbr
-    scenario_type:  str          # "clinch_division" | "clinch_wildcard" | "eliminated"
+    scenario_type:  str          # "clinch_division" | "clinch_wildcard" | "eliminated_division" | "eliminated_wildcard"
     required_wins:  list[str]    # team abbrs that must WIN
     required_losses: list[str]   # team abbrs that must LOSE
     remaining_games: int         # how many requirements are still unresolved
@@ -96,7 +96,7 @@ class ScenarioBuilder:
           - clinch_wildcard  (if they can still make it as a wildcard)
         """
         for abbr, sd in self.standings.items():
-            if sd.get("eliminated"):
+            if self._already_wildcard_eliminated(abbr, sd):
                 continue
             conf = CONFERENCE_MAP.get(abbr, "")
             div  = DIVISION_MAP.get(abbr, "")
@@ -117,16 +117,19 @@ class ScenarioBuilder:
 
     def generate_elimination_scenarios(self) -> None:
         """
-        For every team, generate an elimination scenario representing the
-        conditions under which they would be mathematically eliminated.
+        For every team, generate elimination scenarios:
+          - eliminated_division  (cannot win their division)
+          - eliminated_wildcard  (cannot reach any playoff berth)
+        A team can be division-eliminated while still alive for a wildcard spot.
         """
         count = 0
         for abbr, sd in self.standings.items():
-            elim = self._build_elimination(abbr, sd)
-            if elim:
-                self._write_scenario(elim)
-                self._scenarios.append(elim)
-                count += 1
+            for builder in (self._build_division_elimination, self._build_wildcard_elimination):
+                elim = builder(abbr, sd)
+                if elim:
+                    self._write_scenario(elim)
+                    self._scenarios.append(elim)
+                    count += 1
 
         logger.info("Generated %d elimination scenarios", count)
 
@@ -175,7 +178,7 @@ class ScenarioBuilder:
         for sc in sorted(targets, key=lambda s: s.scenario_type):
             if sc.is_active:
                 status = "+ ACTIVE"
-            elif sc.scenario_type == "eliminated":
+            elif sc.scenario_type in ("eliminated_division", "eliminated_wildcard"):
                 status = "* ELIMINATED"
             else:
                 status = "* CLINCHED"
@@ -218,17 +221,19 @@ class ScenarioBuilder:
             if rival_max > max_team_wins:
                 required_losses.append(rival_abbr)
             elif rival_max == max_team_wins:
-                # Tied at the ceiling — only need their loss if they beat us in TB
-                if not self._team_wins_tiebreaker_over(abbr, rival_abbr, div):
+                # Tied at the ceiling — simulate remaining schedule to check TB
+                if not self._sim_wins_out_tiebreaker(abbr, rival_abbr, div):
                     required_losses.append(rival_abbr)
 
-        # Active if the team hasn't already clinched
-        best_rival_wins = max(
-            (self.standings.get(r, {}).get("wins", 0) for r in rivals), default=0
+        # required_wins: only include team when a rival can still reach team's wins
+        rival_can_match = any(
+            self.standings.get(r, {}).get("wins", 0) + len(self._remaining.get(r, []))
+            >= team_wins
+            for r in rivals
         )
-        is_active = team_wins <= best_rival_wins or bool(required_losses)
+        required_wins = [abbr] if (team_remaining > 0 and rival_can_match) else []
 
-        required_wins = [abbr] if team_remaining > 0 else []
+        is_active = bool(required_wins) or bool(required_losses)
 
         remaining = (
             len([r for r in required_wins  if r not in self._completed_wins.get(abbr, set())]) +
@@ -313,22 +318,66 @@ class ScenarioBuilder:
             is_active       = is_active,
         )
 
-    def _build_elimination(self, abbr: str, sd: dict) -> Scenario | None:
+    def _build_division_elimination(self, abbr: str, sd: dict) -> Scenario | None:
         """
-        Elimination scenario: conditions under which this team is
-        mathematically eliminated from playoff contention.
+        Division elimination: team cannot finish first in their division.
+        Distinct from wildcard elimination — a team can be division-eliminated
+        while still in the wild card race.
+        """
+        div      = DIVISION_MAP.get(abbr, "")
+        div_rivals = [r for r in DIVISION_RIVALS.get(div, []) if r != abbr]
+        if not div_rivals:
+            return None
+
+        team_wins      = sd["wins"]
+        team_remaining = len(self._remaining.get(abbr, []))
+        max_team_wins  = team_wins + team_remaining
+
+        already_eliminated = any(
+            self.standings.get(r, {}).get("wins", 0) > max_team_wins
+            for r in div_rivals
+        )
+
+        # Rivals who could still surpass our maximum win total
+        eliminators = [
+            r for r in div_rivals
+            if self.standings.get(r, {}).get("wins", 0) + len(self._remaining.get(r, [])) > max_team_wins
+        ][:4]
+
+        if not eliminators and not already_eliminated:
+            return None  # team leads their division outright
+
+        slug   = f"{abbr}_EliminatedDivision_{div}"
+        sc_iri = str(SCENARIO[slug])
+        label  = f"{abbr} eliminated from {div} division race"
+
+        return Scenario(
+            iri             = sc_iri,
+            label           = label,
+            beneficiary     = abbr,
+            scenario_type   = "eliminated_division",
+            required_wins   = eliminators,
+            required_losses = [],
+            remaining_games = 0,
+            is_active       = not already_eliminated,
+        )
+
+    def _build_wildcard_elimination(self, abbr: str, sd: dict) -> Scenario | None:
+        """
+        Wildcard elimination: team cannot reach any playoff berth (top 7 in conference).
+        Only reaches this state after 7+ conference peers already exceed our max wins.
         """
         conf = CONFERENCE_MAP.get(abbr, "")
         div  = DIVISION_MAP.get(abbr, "")
 
-        # Division leaders cannot be eliminated — skip them entirely
+        # Division leaders cannot be wildcard-eliminated — they hold a berth
         div_rivals = [r for r in DIVISION_RIVALS.get(div, []) if r != abbr]
         best_rival_wins = max(
             (self.standings.get(r, {}).get("wins", 0) for r in div_rivals),
             default=0,
         )
         if sd["wins"] > best_rival_wins:
-            return None  # team leads their division, not elimination candidate
+            return None
 
         conf_teams = sorted(
             [s for s in self.standings.values() if CONFERENCE_MAP.get(s["abbr"]) == conf],
@@ -340,14 +389,12 @@ class ScenarioBuilder:
         team_remaining = len(self._remaining.get(abbr, []))
         max_team_wins  = team_wins + team_remaining
 
-        # Count how many teams already have more max wins than us
         teams_ahead = [
             t for t in conf_teams
             if t["abbr"] != abbr and t["wins"] > max_team_wins
         ]
         already_eliminated = len(teams_ahead) >= 7
 
-        # Teams whose wins would eliminate the team
         eliminators = [
             t["abbr"] for t in conf_teams
             if t["abbr"] != abbr and
@@ -357,7 +404,7 @@ class ScenarioBuilder:
         if not eliminators and not already_eliminated:
             return None
 
-        slug   = f"{abbr}_Eliminated_{conf}"
+        slug   = f"{abbr}_EliminatedWildcard_{conf}"
         sc_iri = str(SCENARIO[slug])
         label  = f"{abbr} eliminated from {conf} playoff contention"
 
@@ -365,12 +412,24 @@ class ScenarioBuilder:
             iri             = sc_iri,
             label           = label,
             beneficiary     = abbr,
-            scenario_type   = "eliminated",
+            scenario_type   = "eliminated_wildcard",
             required_wins   = eliminators,
             required_losses = [],
             remaining_games = 0,
             is_active       = not already_eliminated,
         )
+
+    def _already_wildcard_eliminated(self, abbr: str, sd: dict) -> bool:
+        """True if the team is already mathematically out of all playoff contention."""
+        conf = CONFERENCE_MAP.get(abbr, "")
+        team_max = sd["wins"] + len(self._remaining.get(abbr, []))
+        conf_teams_ahead = [
+            s for s in self.standings.values()
+            if s["abbr"] != abbr
+            and CONFERENCE_MAP.get(s["abbr"]) == conf
+            and s["wins"] > team_max
+        ]
+        return len(conf_teams_ahead) >= 7
 
     # ── Tiebreaker helpers ────────────────────────────────────────────────────
 
@@ -385,6 +444,104 @@ class ScenarioBuilder:
             return order.index(abbr) < order.index(rival_abbr)
         except ValueError:
             return False
+
+    def _sim_wins_out_tiebreaker(
+        self, abbr: str, rival_abbr: str, div: str
+    ) -> bool:
+        """
+        Project worst-case remaining game outcomes and run the full division
+        tiebreaker on the resulting complete season:
+          - rival wins every remaining H2H game (worst case for team)
+          - team wins all other remaining games
+          - rival wins all other remaining games
+          - other games: home team wins
+
+        Returns True if team still ranks ahead of rival after simulation.
+        Falls back to snapshot tiebreaker_order when tied or on import error.
+        """
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _root = str(_Path(__file__).parent.parent)
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+
+        try:
+            from tiebreaker import Team as TBTeam, Game as TBGame, resolve_division_tie
+        except ImportError:
+            return self._team_wins_tiebreaker_over(abbr, rival_abbr, div)
+
+        # Seed with completed games
+        projected: list = [
+            TBGame.from_dict(g) for g in self.games if g.get("status") == "post"
+        ]
+
+        extra_wins:   dict[str, int] = {}
+        extra_losses: dict[str, int] = {}
+        seen: set = set()
+
+        for game in self.games:
+            if game.get("status") not in ("pre", "in"):
+                continue
+            key = game.get("id") or id(game)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            home = game["home"]["abbr"]
+            away = game["away"]["abbr"]
+
+            if {home, away} == {abbr, rival_abbr}:
+                winner, loser = rival_abbr, abbr        # rival wins H2H
+            elif abbr in (home, away):
+                winner = abbr
+                loser  = away if home == abbr else home
+            elif rival_abbr in (home, away):
+                winner = rival_abbr
+                loser  = away if home == rival_abbr else home
+            else:
+                winner, loser = home, away              # home wins other games
+
+            extra_wins[winner]  = extra_wins.get(winner, 0) + 1
+            extra_losses[loser] = extra_losses.get(loser, 0) + 1
+
+            hs = 21 if winner == home else 17
+            as_ = 21 if winner == away else 17
+            projected.append(TBGame(
+                id=f"sim_{key}",
+                week=game.get("week", 0),
+                season=game.get("season", 2025),
+                home_team_id=home,
+                away_team_id=away,
+                home_score=hs,
+                away_score=as_,
+                status="post",
+            ))
+
+        all_teams: list = [
+            TBTeam(
+                id=a,
+                name=sd.get("name", a),
+                division=DIVISION_MAP.get(a, ""),
+                conference=CONFERENCE_MAP.get(a, ""),
+                wins=sd["wins"]    + extra_wins.get(a, 0),
+                losses=sd["losses"] + extra_losses.get(a, 0),
+                ties=sd.get("ties", 0),
+            )
+            for a, sd in self.standings.items()
+        ]
+
+        team_obj  = next((t for t in all_teams if t.id == abbr),       None)
+        rival_obj = next((t for t in all_teams if t.id == rival_abbr), None)
+        if not team_obj or not rival_obj:
+            return self._team_wins_tiebreaker_over(abbr, rival_abbr, div)
+
+        result = resolve_division_tie([team_obj, rival_obj], projected, all_teams)
+        if result[0].id == abbr:
+            return True
+        if result[0].id == rival_abbr:
+            return False
+        return self._team_wins_tiebreaker_over(abbr, rival_abbr, div)
 
     # ── RDF writer ────────────────────────────────────────────────────────────
 

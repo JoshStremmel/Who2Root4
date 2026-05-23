@@ -164,9 +164,10 @@ class RecommendationEngine:
         divisional_bonus   : 0.20–0.40  (opponent in same division; full 0.40 only when
                                          both fav and rival are still in title contention,
                                          scaled by fav's closeness to the division lead;
-                                         falls back to 0.20 if title is out of reach)
-        conference_bonus   : 0.20  (opponent in same conference, or division rival after
-                                    division title is effectively decided)
+                                         falls back to 0.20 if title is out of reach AND
+                                         the team still has a wildcard path)
+        conference_bonus   : 0.20  (opponent in same conference, only when fav has a
+                                    realistic wildcard path)
         scenario_bonus     : 0.25  (game satisfies an active scenario requirement)
         dislike_bonus      : 0.15  (loathed team is involved)
         record_delta       : 0.10  (how close standings are)
@@ -191,18 +192,28 @@ class RecommendationEngine:
         # Active scenario requirements for the fav team
         active_scenario_wins   = self._active_scenario_wins()
         active_scenario_losses = self._active_scenario_losses()
+        has_wc_path            = self._has_wildcard_path()
+
+        # Skip games with no direct playoff bearing for the fav team.
+        # record_delta and team_strength are tiebreakers, not reasons to care.
+        if not self._has_direct_playoff_impact(
+            home, away,
+            active_scenario_wins, active_scenario_losses,
+            has_wc_path, is_postseason,
+        ):
+            return None
 
         home_score_val = self._score_for(
             home, away,
             DIVISION_MAP.get(home, ""), home_conf,
             active_scenario_wins, active_scenario_losses,
-            is_postseason,
+            is_postseason, has_wc_path,
         )
         away_score_val = self._score_for(
             away, home,
             DIVISION_MAP.get(away, ""), away_conf,
             active_scenario_wins, active_scenario_losses,
-            is_postseason,
+            is_postseason, has_wc_path,
         )
 
         # Underdog tiebreaker: when odds (or prev-season record) reveal a clear underdog,
@@ -239,7 +250,7 @@ class RecommendationEngine:
             CONFERENCE_MAP.get(root_abbr, ""),
             total_score,
             active_scenario_wins, active_scenario_losses,
-            is_postseason,
+            is_postseason, has_wc_path,
         )
 
         return RootingRecommendation(
@@ -263,6 +274,7 @@ class RecommendationEngine:
         scenario_wins:   set[str],
         scenario_losses: set[str],
         is_postseason:   bool,
+        has_wc_path:     bool = True,
     ) -> float:
         """Return a raw impact score for rooting for `candidate` winning."""
         score = 0.0
@@ -280,11 +292,13 @@ class RecommendationEngine:
                 fav_gb     = self._games_back(self.fav_abbr)
                 title_urgency = max(0.0, 1.0 - fav_gb / max(games_rem, 1))
                 score += 0.20 + 0.20 * title_urgency  # 0.20–0.40
-            else:
-                # Division title effectively out of reach for fav or rival —
-                # treat as a conference rival (wild-card implications only)
+            elif has_wc_path:
+                # Division title out of reach for fav or rival, but wildcard still alive —
+                # opponent's loss still has wildcard implications
                 score += 0.20
-        elif opp_conf == self.fav_conf:
+            # else: no wildcard path either — this division game has no playoff bearing
+        elif opp_conf == self.fav_conf and has_wc_path:
+            # Conference rival bonus only when team can realistically reach a wildcard
             score += 0.20
 
         # Scenario-aware bonus: candidate winning satisfies a required win
@@ -321,6 +335,7 @@ class RecommendationEngine:
         scenario_wins:   set[str],
         scenario_losses: set[str],
         is_postseason:   bool,
+        has_wc_path:     bool = True,
     ) -> str:
         parts = []
         opp_div  = DIVISION_MAP.get(against_abbr, "")
@@ -338,7 +353,7 @@ class RecommendationEngine:
                     f"{against_abbr} is a division rival still in the title race "
                     f"({fav_gb:.1f} GB, {games_rem} weeks left) — their loss directly helps"
                 )
-            else:
+            elif has_wc_path:
                 reason = (
                     "division title out of reach for your team"
                     if not self._in_division_contention(self.fav_abbr)
@@ -347,7 +362,7 @@ class RecommendationEngine:
                 parts.append(
                     f"{against_abbr} is a division rival ({reason}) — their loss improves wild card odds"
                 )
-        elif opp_conf == self.fav_conf:
+        elif opp_conf == self.fav_conf and has_wc_path:
             parts.append(f"{against_abbr} is a conference competitor — their loss improves wild card odds")
 
         if root_abbr in scenario_wins:
@@ -533,6 +548,68 @@ class RecommendationEngine:
         conf_peers   = [t for t, c in CONFERENCE_MAP.items() if c == conf and t != abbr]
         teams_ahead  = sum(1 for t in conf_peers if self._wins(t) > max_possible)
         return teams_ahead >= 7
+
+    def _has_wildcard_path(self) -> bool:
+        """
+        False if 3 or more non-division conference teams already have more wins than
+        the fav team's maximum possible win total, meaning all three wildcard spots
+        are locked by teams the fav cannot catch.  A team that can only reach the
+        playoffs as a division winner returns False here.
+        """
+        max_wins = self._wins(self.fav_abbr) + self._games_remaining()
+        blocking = sum(
+            1
+            for t in CONFERENCE_MAP
+            if CONFERENCE_MAP.get(t) == self.fav_conf
+            and DIVISION_MAP.get(t) != self.fav_div
+            and self._wins(t) > max_wins
+        )
+        return blocking < 3
+
+    def _has_direct_playoff_impact(
+        self,
+        home: str,
+        away: str,
+        scenario_wins: set[str],
+        scenario_losses: set[str],
+        has_wc_path: bool,
+        is_postseason: bool,
+    ) -> bool:
+        """
+        Return True if this game has a direct playoff bearing for the fav team.
+        Rejects games whose only contribution would be the minor record_delta /
+        team_strength components, which are tiebreakers, not reasons to care.
+        """
+        if is_postseason:
+            return True
+        if home in scenario_wins or away in scenario_wins:
+            return True
+        if home in scenario_losses or away in scenario_losses:
+            return True
+        if home in self.disliked or away in self.disliked:
+            return True
+
+        home_div = DIVISION_MAP.get(home, "")
+        away_div = DIVISION_MAP.get(away, "")
+
+        # Division title race: both fav and the rival in this game must still be in contention
+        fav_contending = self._in_division_contention(self.fav_abbr)
+        if home_div == self.fav_div and fav_contending and self._in_division_contention(home):
+            return True
+        if away_div == self.fav_div and fav_contending and self._in_division_contention(away):
+            return True
+
+        if has_wc_path:
+            # Division game: opponent's loss affects standings even outside title race
+            if home_div == self.fav_div or away_div == self.fav_div:
+                return True
+            # Conference game: wildcard odds
+            home_conf = CONFERENCE_MAP.get(home, "")
+            away_conf = CONFERENCE_MAP.get(away, "")
+            if home_conf == self.fav_conf or away_conf == self.fav_conf:
+                return True
+
+        return False
 
     def _games_back(self, abbr: str) -> float:
         """Return the team's games-back from its division leader (0.0 = leader)."""
