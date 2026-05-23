@@ -121,8 +121,8 @@ class TestScoring:
         })
         assert result is None
 
-    def test_score_game_skips_interconference_regular_season(self, cin_engine):
-        # DAL vs SF is NFC vs NFC — CIN (AFC) should not care
+    def test_score_game_returns_result_for_unrelated_game(self, cin_engine):
+        # DAL vs SF (NFC-NFC): no scenario applies for CIN (AFC) — always returned now
         result = cin_engine._score_game({
             "game_iri"     : "urn:nfl:game:test",
             "home_abbr"    : "DAL",
@@ -130,7 +130,9 @@ class TestScoring:
             "status"       : "pre",
             "is_postseason": False,
         })
-        assert result is None
+        assert result is not None, "All non-fav games should be returned (show all games)"
+        # No scenario fires for an NFC-NFC game; score is driven only by minor record-delta
+        assert result.score < 0.15, "NFC-NFC game has negligible impact for CIN fan"
 
     def test_divisional_rival_game_scores_high(self, cin_engine):
         # PIT vs CLE: both are division rivals of CIN → high score
