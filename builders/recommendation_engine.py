@@ -3,30 +3,27 @@ recommendation_engine.py
 ────────────────────────
 Generates rooting recommendations by reasoning over the holonic RDF graph.
 
-The engine implements the core inference rule from the design spec:
-
-    If outcome:X impact:improvesOdds team:FavoriteTeam
-    AND user:Josh nfl:favoriteTeam team:FavoriteTeam
-    THEN user:Josh nfl:shouldRootFor outcome:X
-
-It also computes a composite impact score for each upcoming game,
-ranking which game a user should care about most this week.
+Modes
+─────
+  OVERALL       — base playoff contention (division + wildcard, combined)
+  DIVISION      — win the division title (only div-rival games matter)
+  WILDCARD      — earn a wild-card berth (all conf games equal weight)
+  CONF_ONE_SEED — get the #1 conference seed (conf games, weighted by rival wins)
+  TANK          — worst record for best draft pick (reversed logic)
 
 Usage
 ─────
-    from recommendation_engine import RecommendationEngine
-    from rdf_builder import NFLGraphBuilder
-
-    engine = RecommendationEngine(builder.dataset, favorite_team_abbr="CIN")
+    from recommendation_engine import RecommendationEngine, Mode
+    engine = RecommendationEngine(builder.dataset, "CIN", mode=Mode.DIVISION)
     recs   = engine.generate_recommendations()
-    engine.write_recommendations_to_graph(recs)
     engine.print_recommendations(recs)
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from rdflib import RDF, XSD, Dataset, Literal, URIRef
@@ -38,8 +35,15 @@ from rdf_builder import (
 
 logger = logging.getLogger(__name__)
 
-# Numeric weight per strength tier (used for stacking and sorting)
 _STRENGTH_WEIGHT: dict[str, float] = {"high": 0.35, "medium": 0.20, "low": 0.10}
+
+
+class Mode(str, Enum):
+    OVERALL       = "overall"
+    DIVISION      = "division"
+    WILDCARD      = "wildcard"
+    CONF_ONE_SEED = "conf_one_seed"
+    TANK          = "tank"
 
 
 @dataclass
@@ -53,9 +57,9 @@ class RootingRecommendation:
     reasoning:       str
     home_abbr:       str
     away_abbr:       str
-    category:        str   = ""    # primary scenario category name
-    strength:        str   = ""    # "high" | "medium" | "low" | ""
-    strength_weight: float = 0.0   # sum of matching scenario weights (for UI sorting)
+    category:        str   = ""
+    strength:        str   = ""
+    strength_weight: float = 0.0
 
 
 class RecommendationEngine:
@@ -66,12 +70,13 @@ class RecommendationEngine:
 
     def __init__(
         self,
-        dataset: Dataset,
-        favorite_team_abbr: str,
-        disliked_teams: list[str] | None = None,
-        user_iri: str = "urn:nfl:user:default",
+        dataset:               Dataset,
+        favorite_team_abbr:    str,
+        disliked_teams:        list[str] | None = None,
+        user_iri:              str = "urn:nfl:user:default",
         prev_season_standings: list[dict] | None = None,
-        current_week: int | None = None,
+        current_week:          int | None = None,
+        mode:                  str | Mode = Mode.OVERALL,
     ) -> None:
         self.dataset          = dataset
         self.fav_abbr         = favorite_team_abbr.upper()
@@ -82,11 +87,10 @@ class RecommendationEngine:
         self.fav_div          = DIVISION_MAP.get(self.fav_abbr, "")
         self.fav_conf         = CONFERENCE_MAP.get(self.fav_abbr, "")
         self.current_week     = current_week
+        self.mode             = Mode(mode) if isinstance(mode, str) else mode
         self._wins_cache:   dict[str, int] = {}
         self._losses_cache: dict[str, int] = {}
-        # Cached future opponents of the fav team (populated on first use)
         self._future_fav_opponents: set[str] | None = None
-        # Previous-season win counts keyed by team abbreviation (underdog fallback)
         self._prev_wins: dict[str, int] = {
             sd["abbr"]: sd["wins"]
             for sd in (prev_season_standings or [])
@@ -94,23 +98,26 @@ class RecommendationEngine:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def generate_recommendations(self) -> list[RootingRecommendation]:
-        """
-        Score every upcoming (status=pre) or live (status=in) game and return
-        a ranked list of RootingRecommendations.
+    def available_modes(self) -> list[Mode]:
+        """Return which modes are currently reachable given standings."""
+        modes = [Mode.OVERALL]
+        if self._division_path_alive():
+            modes.append(Mode.DIVISION)
+        if self._has_wildcard_path():
+            modes.append(Mode.WILDCARD)
+        if self._conf_one_seed_possible():
+            modes.append(Mode.CONF_ONE_SEED)
+        modes.append(Mode.TANK)
+        return modes
 
-        All games are returned — games with no impact on the fav team receive
-        a score of 0.0 so the user can see the full slate.
-        """
+    def generate_recommendations(self) -> list[RootingRecommendation]:
+        """Score every upcoming/live game and return a ranked list."""
         games = self._fetch_relevant_games()
         recs  = []
         for game_data in games:
             rec = self._score_game(game_data)
             if rec is not None:
                 recs.append(rec)
-
-        # Primary sort: playoff impact score. Secondary: scenario interest (strength_weight)
-        # so that within 0-impact games the most strategically interesting show first.
         recs.sort(key=lambda r: (r.score, r.strength_weight), reverse=True)
         return recs
 
@@ -120,7 +127,6 @@ class RecommendationEngine:
         """Materialise recommendations as RDF triples in graph:recommendations."""
         g = self.dataset.graph(GRAPH["recommendations"])
 
-        # User node
         g.add((self.user_iri, RDF.type, NFL.User))
         g.add((self.user_iri, NFL.favoriteTeam, self.fav_iri))
         for d in self.disliked:
@@ -136,20 +142,14 @@ class RecommendationEngine:
             g.add((rec_iri, NFL.recommendationScore,
                     Literal(round(rec.score, 4), datatype=XSD.float)))
             g.add((rec_iri, NFL.reasoning,        Literal(rec.reasoning)))
-
-            # Scenario fields
             if rec.category:
                 g.add((rec_iri, NFL.category, Literal(rec.category)))
             if rec.strength:
                 g.add((rec_iri, NFL.strength, Literal(rec.strength)))
             g.add((rec_iri, NFL.strengthWeight,
                     Literal(round(rec.strength_weight, 4), datatype=XSD.float)))
-
-            # Impact edges: rooting for root_for improvesOdds; against team harmsOdds
             g.add((rec_iri, IMPACT.improvesOdds, self.fav_iri))
             g.add((_team_iri(rec.against_abbr), IMPACT.harmsOdds, self.fav_iri))
-
-            # User inference triples
             g.add((self.user_iri, NFL.shouldRootFor, rec_iri))
 
         logger.info("Wrote %d recommendations to graph:recommendations", len(recs))
@@ -157,10 +157,29 @@ class RecommendationEngine:
     def print_recommendations(self, recs: list[RootingRecommendation]) -> None:
         """Print a human-readable ranked recommendation list."""
         fav_name = self._team_name(self.fav_abbr)
+        mode_labels = {
+            Mode.OVERALL:       "Overall Playoff Contention",
+            Mode.DIVISION:      f"Division Title Path ({self.fav_div})",
+            Mode.WILDCARD:      f"{self.fav_conf} Wild Card Path",
+            Mode.CONF_ONE_SEED: f"{self.fav_conf} Conference #1 Seed",
+            Mode.TANK:          "Tank for Draft Pick",
+        }
         print(f"\n{'='*65}")
         print(f"  ROOTING GUIDE for {fav_name} fans")
+        print(f"  Mode: {mode_labels.get(self.mode, self.mode.value)}")
+
+        available = self.available_modes()
+        if len(available) < 5:
+            avail_str = " | ".join(mode_labels.get(m, m.value) for m in available)
+            print(f"  Available: {avail_str}")
+
         print(f"{'='*65}")
-        if self._is_playoff_eliminated(self.fav_abbr):
+
+        if self.mode == Mode.TANK:
+            fav_wins   = self._wins(self.fav_abbr)
+            fav_losses = self._losses(self.fav_abbr)
+            print(f"  Record: {fav_wins}-{fav_losses}  |  Root for {fav_name} to LOSE every game")
+        elif self._is_playoff_eliminated(self.fav_abbr):
             print(f"  Note: {fav_name} have been eliminated from playoff contention.")
 
         # ── Fav team's own game ───────────────────────────────────────────────
@@ -177,6 +196,24 @@ class RecommendationEngine:
             print("  No actionable recommendations this week.")
             return
 
+        # ── Tank mode display ─────────────────────────────────────────────────
+        if self.mode == Mode.TANK:
+            print(f"\n  DRAFT POSITIONING — games closest to your win total matter most")
+            for i, r in enumerate(recs, 1):
+                bar = "#" * int(r.score * 20)
+                print(f"\n  #{i}  Root for: {r.root_for_name:25s}  vs  {r.against_name}")
+                print(f"      Draft Impact: {r.score:.3f}  [{bar:<20}]")
+                print(f"      Why: {r.reasoning}")
+            print()
+            return
+
+        # ── Standard display ──────────────────────────────────────────────────
+        impact_label = {
+            Mode.DIVISION:      "division impact",
+            Mode.WILDCARD:      "wildcard impact",
+            Mode.CONF_ONE_SEED: "#1 seed impact",
+        }.get(self.mode, "playoff impact")
+
         impactful = [r for r in recs if r.score > 0.001]
         no_impact  = [r for r in recs if r.score <= 0.001]
 
@@ -189,10 +226,10 @@ class RecommendationEngine:
             print(f"      Why:      {r.reasoning}")
 
         if no_impact:
-            print(f"\n  ── No playoff impact ({len(no_impact)} game(s)) ────────────────")
+            print(f"\n  ── No {impact_label} ({len(no_impact)} game(s)) ────────────────")
             for i, r in enumerate(no_impact, len(impactful) + 1):
                 print(f"\n  #{i}  Root for: {r.root_for_name:25s}  vs  {r.against_name}")
-                print(f"      Score:    0.000  [no playoff impact]")
+                print(f"      Score:    0.000  [no {impact_label}]")
                 print(f"      Why:      {r.reasoning}")
         print()
 
@@ -200,48 +237,19 @@ class RecommendationEngine:
 
     def _score_game(self, gd: dict) -> RootingRecommendation | None:
         """
-        Score a single game and produce a RootingRecommendation.
-        Returns None only for games involving the favorite team itself.
-
-        Every other game is returned — games with no impact get score 0.0.
-
-        Score assembly
-        ──────────────
-        1. Run 5 new scenario detectors; tally weights per side (home/away).
-        2. If scenarios fire, dominant side wins; scenario weights stack.
-        3. Add the existing playoff-bearing score when it agrees with the direction.
-        4. If no scenarios fire, fall back to existing playoff logic (or 0.0).
-        5. Apply team-strength tiebreaker (+0.05 * avgStrength).
-
-        Scenario strength weights
-        ─────────────────────────
-          DivisionRivalTank  : 0.35  (high)
-          OpponentTanking    : 0.20  (medium)
-          PlayoffSoftening   : 0.20  (medium)
-          UpsetRooting       : 0.20  (medium)
-          DraftPositioning   : 0.10  (low)
-
-        Existing playoff components (still active as bonus)
-        ───────────────────────────────────────────────────
-          divisional_bonus   : 0.20–0.40
-          conference_bonus   : 0.20
-          scenario_bonus     : 0.25  (active clinch/elimination scenario)
-          dislike_bonus      : 0.15
-          record_delta       : 0.10
-          postseason_bonus   : 0.10
+        Score a single game. Returns None only for fav team's own games.
+        Branches to _score_game_tank() in TANK mode.
         """
         home = gd["home_abbr"]
         away = gd["away_abbr"]
-
-        # Only skip games involving the fav team itself
         if home == self.fav_abbr or away == self.fav_abbr:
             return None
 
+        if self.mode == Mode.TANK:
+            return self._score_game_tank(gd)
+
         is_postseason = gd.get("is_postseason", False)
 
-        # ── Playoff impact score ───────────────────────────────────────────────
-        # Only same-conference or postseason games can move the fav's playoff odds.
-        # Cross-conference games are always 0 playoff impact (score stays 0).
         active_scenario_wins   = self._active_scenario_wins()
         active_scenario_losses = self._active_scenario_losses()
         has_wc_path            = self._has_wildcard_path()
@@ -272,29 +280,38 @@ class RecommendationEngine:
         else:
             playoff_root, playoff_against, playoff_score = home, away, 0.0
 
-        # Zero out playoff score when either team is already eliminated (regular season)
         if not is_postseason and playoff_score > 0 and (
             self._is_playoff_eliminated(playoff_root)
             or self._is_playoff_eliminated(playoff_against)
         ):
             playoff_score = 0.0
 
-        # ── New scenario detectors ─────────────────────────────────────────────
-        fav_future_opps = self._get_future_fav_opponents()
-        all_scenario_recs: list[dict] = (
-            self._scenario_division_rival_tank(home, away)
-            + self._scenario_opponent_tanking(home, away, fav_future_opps)
-            + self._scenario_playoff_softening(home, away)
-            + self._scenario_upset_rooting(home, away)
-            + self._scenario_draft_positioning(home, away)
-            + self._scenario_dislikes(home, away)
-        )
+        # ── Scenario detectors (mode-filtered) ────────────────────────────────
+        fav_future_opps     = self._get_future_fav_opponents()
+        all_scenario_recs: list[dict] = []
+
+        # DivisionRivalTank: all non-tank modes
+        all_scenario_recs += self._scenario_division_rival_tank(home, away)
+
+        # OpponentTanking: all non-tank modes
+        all_scenario_recs += self._scenario_opponent_tanking(home, away, fav_future_opps)
+
+        # PlayoffSoftening / UpsetRooting: not DIVISION (irrelevant for div title focus)
+        if self.mode not in (Mode.DIVISION,):
+            all_scenario_recs += self._scenario_playoff_softening(home, away)
+            all_scenario_recs += self._scenario_upset_rooting(home, away)
+
+        # DraftPositioning: OVERALL and WILDCARD only
+        if self.mode in (Mode.OVERALL, Mode.WILDCARD):
+            all_scenario_recs += self._scenario_draft_positioning(home, away)
+
+        # Dislikes: always
+        all_scenario_recs += self._scenario_dislikes(home, away)
 
         home_weight = sum(s["strength_weight"] for s in all_scenario_recs if s["root_for"] == home)
         away_weight = sum(s["strength_weight"] for s in all_scenario_recs if s["root_for"] == away)
 
         if home_weight > 0 or away_weight > 0:
-            # Scenarios have a preferred direction
             if home_weight >= away_weight:
                 root_abbr, against_abbr = home, away
                 matching = [s for s in all_scenario_recs if s["root_for"] == home]
@@ -309,10 +326,8 @@ class RecommendationEngine:
             strength        = primary["strength"]
             strength_weight = primary["strength_weight"]
 
-            # Impact score = playoff odds only; scenarios guide direction but don't inflate it
             total_score = playoff_score if root_abbr == playoff_root else 0.0
 
-            # Show only top 1–2 reasons, sorted by weight
             sorted_scenarios = sorted(matching, key=lambda s: s["strength_weight"], reverse=True)
             why_parts = [sorted_scenarios[0]["why"]]
             if (len(sorted_scenarios) > 1
@@ -320,7 +335,6 @@ class RecommendationEngine:
                     and sorted_scenarios[1]["category"] != sorted_scenarios[0]["category"]):
                 why_parts.append(sorted_scenarios[1]["why"])
 
-            # Add playoff context when it exists and isn't implied by a high scenario
             if playoff_score > 0 and root_abbr == playoff_root and sorted_scenarios[0]["strength_weight"] < 0.35:
                 ps_str = self._build_reasoning(
                     root_abbr, against_abbr,
@@ -336,7 +350,6 @@ class RecommendationEngine:
             reasoning = "; ".join(why_parts) + f" (score {total_score:.2f})"
 
         else:
-            # No new scenarios — fall back to existing playoff logic
             root_abbr, against_abbr = playoff_root, playoff_against
             total_score     = playoff_score
             strength_weight = 0.0
@@ -357,8 +370,6 @@ class RecommendationEngine:
                 is_postseason, has_wc_path,
             )
 
-        # Team-strength tiebreaker only applied when the game has real playoff impact,
-        # so games with 0 playoff impact stay at exactly 0.0.
         if total_score > 0:
             avg_strength = (self._strength_score(home) + self._strength_score(away)) / 2
             total_score  = min(total_score + 0.05 * avg_strength, 1.0)
@@ -378,38 +389,152 @@ class RecommendationEngine:
             strength_weight = strength_weight,
         )
 
+    def _score_game_tank(self, gd: dict) -> RootingRecommendation | None:
+        """
+        Tank mode: root for the team with fewer (or equal) wins so they move
+        up the standings and stop competing for the worst-record draft slot.
+
+        Score = proximity of both teams to fav team's win total (0–1).
+        Division rivals winning gets a bonus (want them to accumulate wins
+        so the whole division isn't tanking below us).
+        """
+        home = gd["home_abbr"]
+        away = gd["away_abbr"]
+        if home == self.fav_abbr or away == self.fav_abbr:
+            return None
+
+        fav_wins  = self._wins(self.fav_abbr)
+        home_wins = self._wins(home)
+        away_wins = self._wins(away)
+
+        # Root for the team with fewer wins (bring them up, stay at the bottom)
+        if home_wins <= away_wins:
+            root_abbr, against_abbr = home, away
+            root_wins, opp_wins = home_wins, away_wins
+        else:
+            root_abbr, against_abbr = away, home
+            root_wins, opp_wins = away_wins, home_wins
+
+        # Score: teams closest to fav's win count affect our draft slot most
+        home_gap = abs(home_wins - fav_wins)
+        away_gap = abs(away_wins - fav_wins)
+        min_gap  = min(home_gap, away_gap)
+
+        if min_gap == 0:
+            base_score = 0.50
+        elif min_gap == 1:
+            base_score = 0.35
+        elif min_gap == 2:
+            base_score = 0.20
+        elif min_gap == 3:
+            base_score = 0.10
+        else:
+            base_score = 0.05
+
+        # Division rivals winning moves them up and out of our draft range
+        is_div_rival = DIVISION_MAP.get(root_abbr) == self.fav_div
+        if is_div_rival:
+            base_score = min(base_score + 0.15, 1.0)
+
+        # Reasoning
+        if root_wins < fav_wins:
+            why = (
+                f"{root_abbr} ({root_wins}W) is below you in wins — "
+                f"their win brings them up and protects your draft slot"
+            )
+        elif root_wins == fav_wins:
+            why = (
+                f"{root_abbr} ({root_wins}W) is tied with you — "
+                f"their win separates them from your draft range"
+            )
+        else:
+            why = (
+                f"neither team threatens your draft slot; "
+                f"root for the worse-record team to clear the field below you"
+            )
+
+        strength = "high" if base_score >= 0.35 else ("medium" if base_score >= 0.20 else "low")
+
+        return RootingRecommendation(
+            game_iri        = gd["game_iri"],
+            root_for_abbr   = root_abbr,
+            root_for_name   = self._team_name(root_abbr),
+            against_abbr    = against_abbr,
+            against_name    = self._team_name(against_abbr),
+            score           = base_score,
+            reasoning       = why + f" (score {base_score:.2f})",
+            home_abbr       = home,
+            away_abbr       = away,
+            category        = "TankPositioning",
+            strength        = strength,
+            strength_weight = _STRENGTH_WEIGHT.get(strength, 0.10),
+        )
+
     def _score_for(
         self,
-        candidate:   str,
-        opponent:    str,
-        candidate_div: str,
+        candidate:      str,
+        opponent:       str,
+        candidate_div:  str,
         candidate_conf: str,
         scenario_wins:   set[str],
         scenario_losses: set[str],
         is_postseason:   bool,
         has_wc_path:     bool = True,
     ) -> float:
-        """Return a raw playoff-impact score for rooting for `candidate` winning."""
-        score = 0.0
+        """
+        Return a raw playoff-impact score for rooting for `candidate` winning
+        (= `opponent` losing). Weights depend on self.mode.
 
+        OVERALL       — division urgency + wildcard conference bonus
+        DIVISION      — division bonus only; conference non-div games get 0
+        WILDCARD      — flat 0.20 for any conference opponent loss
+        CONF_ONE_SEED — flat bonus scaled by opponent's win count (leader matters most)
+        """
+        score    = 0.0
         opp_div  = DIVISION_MAP.get(opponent, "")
         opp_conf = CONFERENCE_MAP.get(opponent, "")
+        is_same_div  = (opp_div  == self.fav_div)
+        is_same_conf = (opp_conf == self.fav_conf)
 
-        # Divisional / conference impact
-        if opp_div == self.fav_div:
-            fav_contending = self._in_division_contention(self.fav_abbr)
-            opp_contending = self._in_division_contention(opponent)
-            if fav_contending and opp_contending:
-                games_rem  = self._games_remaining()
-                fav_gb     = self._games_back(self.fav_abbr)
-                title_urgency = max(0.0, 1.0 - fav_gb / max(games_rem, 1))
-                score += 0.20 + 0.20 * title_urgency  # 0.20–0.40
-            elif has_wc_path:
+        if self.mode == Mode.DIVISION:
+            if is_same_div:
+                fav_contending = self._in_division_contention(self.fav_abbr)
+                opp_contending = self._in_division_contention(opponent)
+                if fav_contending and opp_contending:
+                    games_rem     = self._games_remaining()
+                    fav_gb        = self._games_back(self.fav_abbr)
+                    title_urgency = max(0.0, 1.0 - fav_gb / max(games_rem, 1))
+                    score += 0.25 + 0.25 * title_urgency   # 0.25–0.50
+                else:
+                    score += 0.25
+            # non-division games contribute 0 conf bonus in DIVISION mode
+
+        elif self.mode == Mode.WILDCARD:
+            # All conference losses are equally valuable for wildcard positioning
+            if is_same_conf or is_same_div:
                 score += 0.20
-        elif opp_conf == self.fav_conf and has_wc_path:
-            score += 0.20
 
-        # Scenario-aware bonus
+        elif self.mode == Mode.CONF_ONE_SEED:
+            # Any conference loss helps; opponent's win count weights urgency
+            if is_same_conf or is_same_div:
+                opp_wins_norm = min(self._wins(opponent) / 17.0, 1.0)
+                score += 0.20 + 0.10 * opp_wins_norm   # 0.20–0.30
+
+        else:  # Mode.OVERALL
+            if is_same_div:
+                fav_contending = self._in_division_contention(self.fav_abbr)
+                opp_contending = self._in_division_contention(opponent)
+                if fav_contending and opp_contending:
+                    games_rem     = self._games_remaining()
+                    fav_gb        = self._games_back(self.fav_abbr)
+                    title_urgency = max(0.0, 1.0 - fav_gb / max(games_rem, 1))
+                    score += 0.20 + 0.20 * title_urgency
+                elif has_wc_path:
+                    score += 0.20
+            elif is_same_conf and has_wc_path:
+                score += 0.20
+
+        # Scenario-aware bonus (active clinch/elimination nodes in the graph)
         if candidate in scenario_wins:
             score += 0.25
         if opponent in scenario_losses:
@@ -419,7 +544,7 @@ class RecommendationEngine:
         if opponent in self.disliked:
             score += 0.15
 
-        # Record closeness
+        # Record closeness (small tiebreaker)
         fav_rec = self._win_pct(self.fav_abbr)
         opp_rec = self._win_pct(opponent)
         delta   = abs(fav_rec - opp_rec)
@@ -442,9 +567,15 @@ class RecommendationEngine:
         is_postseason:   bool,
         has_wc_path:     bool = True,
     ) -> str:
-        parts = []
+        parts    = []
         opp_div  = DIVISION_MAP.get(against_abbr, "")
         opp_conf = CONFERENCE_MAP.get(against_abbr, "")
+
+        # Mode-specific target label
+        target = {
+            Mode.DIVISION:      "division title odds",
+            Mode.CONF_ONE_SEED: "#1 seed odds",
+        }.get(self.mode, "wild card odds")
 
         if is_postseason:
             parts.append("postseason game — every result reshapes the bracket")
@@ -464,22 +595,35 @@ class RecommendationEngine:
                 elif opp_gb < fav_gb:
                     gb_str = f"you are {fav_gb - opp_gb:.1f} GB behind {against_abbr}"
                 else:
-                    gb_str = f"tied in the division"
+                    gb_str = "tied in the division"
                 parts.append(
                     f"{against_abbr} is a division rival in a title race "
                     f"({gb_str}, {games_rem} weeks left) — their loss directly helps"
                 )
-            elif has_wc_path:
+            elif has_wc_path or self.mode == Mode.DIVISION:
                 reason = (
                     "division title out of reach for your team"
                     if not self._in_division_contention(self.fav_abbr)
                     else f"{against_abbr} eliminated from division title race"
                 )
                 parts.append(
-                    f"{against_abbr} is a division rival ({reason}) — their loss improves wild card odds"
+                    f"{against_abbr} is a division rival ({reason}) — "
+                    f"their loss improves {target}"
                 )
-        elif opp_conf == self.fav_conf and has_wc_path:
-            parts.append(f"{against_abbr} is a conference competitor — their loss improves wild card odds")
+        elif opp_conf == self.fav_conf and (
+            has_wc_path or self.mode in (Mode.WILDCARD, Mode.CONF_ONE_SEED)
+        ):
+            if self.mode == Mode.CONF_ONE_SEED:
+                against_wins = self._wins(against_abbr)
+                parts.append(
+                    f"{against_abbr} ({against_wins}W) is a {self.fav_conf} rival — "
+                    f"their loss improves {target}"
+                )
+            else:
+                parts.append(
+                    f"{against_abbr} is a conference competitor — "
+                    f"their loss improves {target}"
+                )
 
         if root_abbr in scenario_wins:
             parts.append(f"{root_abbr} winning satisfies an active clinch scenario requirement")
@@ -494,21 +638,9 @@ class RecommendationEngine:
         return "; ".join(parts) + f" (score {score:.2f})"
 
     # ── New Scenario Detectors ────────────────────────────────────────────────
-    #
-    # Each detector returns a list of dicts:
-    #   root_for        : str   — abbreviation of the team to root for
-    #   against         : str   — abbreviation of the team to root against
-    #   category        : str   — scenario type name
-    #   strength        : str   — "high" | "medium" | "low"
-    #   strength_weight : float — numeric weight (from _STRENGTH_WEIGHT)
-    #   why             : str   — human-readable explanation
-    #
-    # Multiple detectors can fire for the same game (they stack).
 
-    def _scenario_division_rival_tank(
-        self, home: str, away: str
-    ) -> list[dict]:
-        """Root against any division rival regardless of standings context. Strength: high."""
+    def _scenario_division_rival_tank(self, home: str, away: str) -> list[dict]:
+        """Root against any division rival. Strength: high."""
         results: list[dict] = []
         for team in (home, away):
             if DIVISION_MAP.get(team) == self.fav_div and team != self.fav_abbr:
@@ -529,12 +661,7 @@ class RecommendationEngine:
     def _scenario_opponent_tanking(
         self, home: str, away: str, future_opponents: set[str]
     ) -> list[dict]:
-        """
-        Root against upcoming fav-team opponents:
-          - winning record → cool momentum before the matchup
-          - losing record  → keep the locker room fractured heading into your game
-        Strength: medium.
-        """
+        """Root against upcoming fav-team opponents. Strength: medium."""
         results: list[dict] = []
         for team in (home, away):
             if team not in future_opponents:
@@ -568,13 +695,8 @@ class RecommendationEngine:
                 })
         return results
 
-    def _scenario_playoff_softening(
-        self, home: str, away: str
-    ) -> list[dict]:
-        """
-        Root against same-conference teams with winning records projecting into
-        playoff seeding — dent momentum and expose scheme. Strength: medium.
-        """
+    def _scenario_playoff_softening(self, home: str, away: str) -> list[dict]:
+        """Root against same-conference teams with winning records. Strength: medium."""
         results: list[dict] = []
         for team in (home, away):
             if team == self.fav_abbr:
@@ -598,14 +720,8 @@ class RecommendationEngine:
                 })
         return results
 
-    def _scenario_upset_rooting(
-        self, home: str, away: str
-    ) -> list[dict]:
-        """
-        Root for the underdog when a conference rival is a heavy home favorite
-        (4+ win advantage). A team that comfortable at home is a trap-game risk.
-        Strength: medium.
-        """
+    def _scenario_upset_rooting(self, home: str, away: str) -> list[dict]:
+        """Root for the underdog when a conference rival is a heavy home favorite. Strength: medium."""
         results: list[dict] = []
         home_wins = self._wins(home)
         away_wins = self._wins(away)
@@ -629,13 +745,9 @@ class RecommendationEngine:
             })
         return results
 
-    def _scenario_draft_positioning(
-        self, home: str, away: str
-    ) -> list[dict]:
+    def _scenario_draft_positioning(self, home: str, away: str) -> list[dict]:
         """
-        Root against division rivals or conference threats with 6–9 wins —
-        competitive enough to look relevant but not good enough to contend.
-        Pushing them lower improves their draft pick without helping a real contender.
+        Root against div rivals / conf threats with 6–9 wins — in no man's land.
         Strength: low.
         """
         results: list[dict] = []
@@ -653,7 +765,7 @@ class RecommendationEngine:
                 results.append({
                     "root_for":        opponent,
                     "against":         team,
-                    "category":       "DraftPositioning",
+                    "category":        "DraftPositioning",
                     "strength":        "low",
                     "strength_weight": _STRENGTH_WEIGHT["low"],
                     "why": (
@@ -664,16 +776,8 @@ class RecommendationEngine:
                 })
         return results
 
-    def _scenario_dislikes(
-        self, home: str, away: str
-    ) -> list[dict]:
-        """
-        Root against any team the user dislikes.
-        Fires for every game involving a disliked team regardless of conference.
-        Strength: medium — won't override high-strength scenarios (DivisionRivalTank)
-        when they conflict, but will set direction for 0-impact games and stack
-        with agreeing scenarios.
-        """
+    def _scenario_dislikes(self, home: str, away: str) -> list[dict]:
+        """Root against any disliked team regardless of conference. Strength: medium."""
         results: list[dict] = []
         for team in (home, away):
             if team in self.disliked:
@@ -691,10 +795,6 @@ class RecommendationEngine:
     # ── Scenario helpers ──────────────────────────────────────────────────────
 
     def _active_scenario_wins(self) -> set[str]:
-        """
-        Query the graph for teams whose WIN is required by an active
-        scenario benefiting the favorite team.
-        """
         q = f"""
         PREFIX nfl:  <urn:nfl:>
         PREFIX cga:  <urn:holonic:ontology:>
@@ -711,17 +811,12 @@ class RecommendationEngine:
         abbrs: set[str] = set()
         try:
             for row in self.dataset.query(q):
-                iri = str(row.team)
-                abbrs.add(iri.split(":")[-1])
+                abbrs.add(str(row.team).split(":")[-1])
         except Exception:
             pass
         return abbrs
 
     def _active_scenario_losses(self) -> set[str]:
-        """
-        Query the graph for teams whose LOSS is required by an active
-        scenario benefiting the favorite team.
-        """
         q = f"""
         PREFIX nfl:  <urn:nfl:>
         PREFIX cga:  <urn:holonic:ontology:>
@@ -738,8 +833,7 @@ class RecommendationEngine:
         abbrs: set[str] = set()
         try:
             for row in self.dataset.query(q):
-                iri = str(row.team)
-                abbrs.add(iri.split(":")[-1])
+                abbrs.add(str(row.team).split(":")[-1])
         except Exception:
             pass
         return abbrs
@@ -787,7 +881,17 @@ class RecommendationEngine:
         return results
 
     def _win_impact_blurb(self, opponent: str) -> str:
-        """One-line description of what winning the fav's own game would accomplish."""
+        """One-line description of what winning/losing the fav's own game would accomplish."""
+        if self.mode == Mode.TANK:
+            fav_wins   = self._wins(self.fav_abbr)
+            fav_losses = self._losses(self.fav_abbr)
+            opp_wins   = self._wins(opponent)
+            return (
+                f"TANK: root for {opponent} ({opp_wins}W) to WIN — "
+                f"a {self.fav_abbr} loss improves draft positioning "
+                f"(current: {fav_wins}-{fav_losses})"
+            )
+
         games_rem    = self._games_remaining()
         fav_gb       = self._games_back(self.fav_abbr)
         is_div_rival = DIVISION_MAP.get(opponent) == self.fav_div
@@ -795,7 +899,7 @@ class RecommendationEngine:
         if self._is_playoff_eliminated(self.fav_abbr):
             return "out of playoff contention — playing for pride and draft position"
 
-        if self._in_division_contention(self.fav_abbr):
+        if self.mode == Mode.DIVISION or self._in_division_contention(self.fav_abbr):
             if fav_gb == 0.0:
                 if is_div_rival:
                     opp_gb = self._games_back(opponent)
@@ -815,16 +919,21 @@ class RecommendationEngine:
                     f"({fav_gb:.1f} GB back, {games_rem} weeks left)"
                 )
 
+        if self.mode == Mode.CONF_ONE_SEED:
+            conf_leader_wins = self._conf_leader_wins()
+            fav_wins = self._wins(self.fav_abbr)
+            gap = conf_leader_wins - fav_wins
+            return (
+                f"win to chase the {self.fav_conf} #1 seed "
+                f"({gap}W behind the leader, {games_rem} weeks left)"
+            )
+
         if self._has_wildcard_path():
             return f"win to strengthen your {self.fav_conf} wildcard position"
 
         return "win to keep playoff hopes alive"
 
     def _get_future_fav_opponents(self) -> set[str]:
-        """
-        Return the set of team abbreviations the fav team still has to face
-        (status=pre games in the dataset). Result is cached after first call.
-        """
         if self._future_fav_opponents is not None:
             return self._future_fav_opponents
 
@@ -837,9 +946,7 @@ class RecommendationEngine:
                       nfl:status "pre" ;
                       nfl:homeTeam ?home ;
                       nfl:awayTeam ?away .
-                FILTER(
-                    ?home = <{fav_iri}> || ?away = <{fav_iri}>
-                )
+                FILTER(?home = <{fav_iri}> || ?away = <{fav_iri}>)
                 BIND(IF(?home = <{fav_iri}>, ?away, ?home) AS ?opponent)
             }}
         }}
@@ -893,6 +1000,30 @@ class RecommendationEngine:
                 "home_favorite" : self._safe_bool(row.homeFavorite),
             })
         return rows
+
+    # ── Availability checks ───────────────────────────────────────────────────
+
+    def _division_path_alive(self) -> bool:
+        """Team can still mathematically win the division."""
+        max_wins  = self._wins(self.fav_abbr) + self._games_remaining()
+        div_peers = [t for t in DIVISION_MAP if DIVISION_MAP[t] == self.fav_div and t != self.fav_abbr]
+        return all(self._wins(t) <= max_wins for t in div_peers)
+
+    def _conf_one_seed_possible(self) -> bool:
+        """Team can still mathematically get the #1 conference seed."""
+        max_wins   = self._wins(self.fav_abbr) + self._games_remaining()
+        conf_peers = [t for t in CONFERENCE_MAP if CONFERENCE_MAP[t] == self.fav_conf and t != self.fav_abbr]
+        return all(self._wins(t) <= max_wins for t in conf_peers)
+
+    def _conf_leader_wins(self) -> int:
+        """Win count of the current conference leader."""
+        best = 0
+        for t in CONFERENCE_MAP:
+            if CONFERENCE_MAP[t] == self.fav_conf:
+                best = max(best, self._wins(t))
+        return best
+
+    # ── Standings helpers ─────────────────────────────────────────────────────
 
     def _team_name(self, abbr: str) -> str:
         q = f"""
@@ -972,11 +1103,6 @@ class RecommendationEngine:
         return result
 
     def _is_playoff_eliminated(self, abbr: str) -> bool:
-        """
-        True if the team can no longer mathematically reach a top-7 seed in their conference.
-        A team is eliminated when 7 or more conference peers already have more wins than
-        the team's maximum possible win total (current wins + games remaining).
-        """
         conf = CONFERENCE_MAP.get(abbr, "")
         if not conf:
             return False
@@ -987,11 +1113,6 @@ class RecommendationEngine:
         return teams_ahead >= 7
 
     def _has_wildcard_path(self) -> bool:
-        """
-        False if 3 or more non-division conference teams already have more wins than
-        the fav team's maximum possible win total, meaning all three wildcard spots
-        are locked by teams the fav cannot catch.
-        """
         max_wins = self._wins(self.fav_abbr) + self._games_remaining()
         blocking = sum(
             1
@@ -1003,7 +1124,6 @@ class RecommendationEngine:
         return blocking < 3
 
     def _games_back(self, abbr: str) -> float:
-        """Return the team's games-back from its division leader (0.0 = leader)."""
         q = f"""
         PREFIX nfl: <urn:nfl:>
         SELECT ?gb WHERE {{
@@ -1018,25 +1138,14 @@ class RecommendationEngine:
         return 0.0
 
     def _games_remaining(self) -> int:
-        """Estimate regular-season games remaining based on current week."""
         if self.current_week is None:
             return 9
         return max(0, 19 - self.current_week)
 
     def _in_division_contention(self, abbr: str) -> bool:
-        """True if the team can still mathematically win their division."""
         return self._games_back(abbr) <= self._games_remaining()
 
     def _resolve_underdog(self, home: str, away: str, gd: dict) -> str | None:
-        """
-        Return the abbreviation of the underdog team for this game, or None.
-
-        Resolution order:
-          1. Point spread from ESPN odds   (negative = home favored)
-          2. Money-line comparison         (more negative = bigger favorite)
-          3. homeFavorite boolean from RDF
-          4. Previous season win counts    (more wins last year → stronger team)
-        """
         spread = gd.get("spread")
         hml    = gd.get("home_moneyline")
         aml    = gd.get("away_moneyline")
@@ -1064,7 +1173,7 @@ class RecommendationEngine:
 
         return None
 
-    # ── Type-coercion helpers (SPARQL results are rdflib Literals) ────────────
+    # ── Type-coercion helpers ─────────────────────────────────────────────────
 
     @staticmethod
     def _safe_float(val: Any) -> float | None:

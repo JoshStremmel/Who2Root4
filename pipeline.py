@@ -49,7 +49,7 @@ from builders.espn_fetcher import (
 from builders.rdf_builder import NFLGraphBuilder, GRAPH
 from builders.scenario_builder import ScenarioBuilder
 from builders.season_ingester import SeasonIngester
-from builders.recommendation_engine import RecommendationEngine
+from builders.recommendation_engine import RecommendationEngine, Mode
 from builders.team_strength import computeAllTeamStrengths, print_strength_table
 from queries.sparql_queries import (
     ALL_TEAMS, COMPLETED_GAMES, UPCOMING_GAMES, DIVISION_LEADERS,
@@ -242,6 +242,13 @@ def main() -> None:
             disliked_teams        = args.dislikes or [],
             prev_season_standings = prev_season_standings,
             current_week          = current_week,
+            mode                  = args.mode or "overall",
+        )
+        # Show which modes are currently reachable
+        avail = engine.available_modes()
+        logger.info(
+            "Available modes: %s",
+            ", ".join(m.value for m in avail),
         )
         recs = engine.generate_recommendations()
         engine.print_recommendations(recs)
@@ -366,6 +373,13 @@ def _parse_args() -> argparse.Namespace:
                    help="Your favorite team abbreviation (e.g. CIN, KC, BUF)")
     p.add_argument("--dislikes",      metavar="ABBR", nargs="*",
                    help="Teams you dislike (boosts recommendation score against them)")
+    p.add_argument("--mode",
+                   choices=["overall", "division", "wildcard", "conf_one_seed", "tank"],
+                   default="overall",
+                   help=(
+                       "Recommendation mode: overall (default), division, wildcard, "
+                       "conf_one_seed, or tank"
+                   ))
 
     # Season scope
     p.add_argument("--full-season",   action="store_true",
