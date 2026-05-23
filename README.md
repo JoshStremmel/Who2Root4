@@ -17,32 +17,32 @@ pip install -r requirements.txt
 ## Quick Start
 
 ```bash
-# Current week — Bengals fan
-python pipeline.py --team CIN
+# Current week — Steelers fan
+python pipeline.py --team PIT
 
 # Full season with playoff scenario analysis
-python pipeline.py --team CIN --full-season
+python pipeline.py --team PIT --full-season
 
 # Full season through a specific week
-python pipeline.py --team CIN --full-season --through-week 14 --season 2025
+python pipeline.py --team PIT --full-season --through-week 14 --season 2025
 
 # Include postseason rounds (Wild Card → Super Bowl)
-python pipeline.py --team CIN --full-season --postseason
+python pipeline.py --team PIT --full-season --postseason
 
 # Simulate standings as of week 12 (blanks results for weeks ≥ 12)
-python pipeline.py --team CIN --full-season --sim-week 12
+python pipeline.py --team PIT --full-season --sim-week 12
 
 # Dislikes also affect recommendation scores
-python pipeline.py --team CIN --dislikes BAL CLE
+python pipeline.py --team PIT --dislikes BAL CLE
 
 # Save graph to TriG, also dump per-named-graph Turtle files
-python pipeline.py --team CIN --full-season --output holarchy.trig --dump-graphs
+python pipeline.py --team PIT --full-season --output holarchy.trig --dump-graphs
 
 # Dry-run: load from saved ESPN JSON (no network)
-python pipeline.py --team CIN --json-file espn_data.json
+python pipeline.py --team PIT --json-file espn_data.json
 
 # Force re-fetch even if cache exists
-python pipeline.py --team CIN --full-season --force-refresh
+python pipeline.py --team PIT --full-season --force-refresh
 ```
 
 ---
@@ -125,16 +125,16 @@ Who2Root4/
 
 ```
 ================================================================
-  ROOTING GUIDE for Cincinnati Bengals fans
+  ROOTING GUIDE for Pittsburgh Steelers fans
 ================================================================
 
-  #1  Root for: New York Jets              vs  Buffalo Bills
+  #1  Root for: Cincinnati Bengals         vs  Baltimore Ravens
       Score:    0.782  [################    ]
-      Why:      BUF is a division rival still in the title race (1.0 GB, 5 weeks left) — their loss directly helps; BUF losing satisfies an active clinch scenario requirement (score 0.78)
+      Why:      BAL is a division rival still in the title race (1.0 GB, 5 weeks left) — their loss directly helps; BAL losing satisfies an active clinch scenario requirement (score 0.78)
 
-  #2  Root for: Houston Texans             vs  Pittsburgh Steelers
+  #2  Root for: Jacksonville Jaguars       vs  Houston Texans
       Score:    0.621  [############        ]
-      Why:      PIT is a conference competitor — their loss improves wild card odds (score 0.62)
+      Why:      HOU is a conference competitor — their loss improves wild card odds (score 0.62)
 ```
 
 ---
@@ -158,6 +158,6 @@ Pass `ds.dataset` to `NFLGraphBuilder`.
 from builders.rdf_builder import USER, NFL, _team_iri
 
 user_g = builder.dataset.graph("urn:nfl:graph:users")
-user_g.add((USER["josh"], NFL.favoriteTeam, _team_iri("CIN")))
+user_g.add((USER["josh"], NFL.favoriteTeam, _team_iri("PIT")))
 user_g.add((USER["josh"], NFL.dislikes,     _team_iri("BAL")))
 ```
