@@ -106,10 +106,11 @@ class NFLGraphBuilder:
         self._g_holarchy    = self.dataset.graph(GRAPH["holarchy"])
 
         # Runtime state
-        self._team_abbrs:   set[str]       = set()
-        self._game_iris:    dict[str, URIRef] = {}   # espn_id → URIRef
-        self._game_data:    list[dict]     = []
-        self._standings:    list[dict]     = []
+        self._team_abbrs:        set[str]          = set()
+        self._game_iris:         dict[str, URIRef] = {}   # espn_id → URIRef
+        self._game_data:         list[dict]        = []
+        self._standings:         list[dict]        = []
+        self._team_graph_cache:  dict[str, Graph]  = {}   # abbr → interior graph
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -417,9 +418,13 @@ class NFLGraphBuilder:
         g.bind("graph",   GRAPH)
 
     def _team_interior_graph(self, abbr: str) -> Graph:
+        cached = self._team_graph_cache.get(abbr)
+        if cached is not None:
+            return cached
         iri = GRAPH[f"team:{abbr}"]
         g = self.dataset.graph(iri)
         self._bind_namespaces(g)
+        self._team_graph_cache[abbr] = g
         return g
 
     def _upsert_team(self, td: dict) -> None:
@@ -427,31 +432,32 @@ class NFLGraphBuilder:
         t_iri = _team_iri(abbr)
         g     = self._team_interior_graph(abbr)
 
-        g.add((t_iri, RDF.type,         NFL.Team))
-        g.add((t_iri, NFL.name,         Literal(td["name"])))
-        g.add((t_iri, NFL.abbreviation, Literal(abbr)))
-        if td.get("location"):
-            g.add((t_iri, NFL.location, Literal(td["location"])))
-        if td.get("short_name"):
-            g.add((t_iri, RDFS.label,   Literal(td["short_name"])))
+        if abbr not in self._team_abbrs:
+            # First insertion: write all static facts once
+            g.add((t_iri, RDF.type,         NFL.Team))
+            g.add((t_iri, NFL.name,         Literal(td["name"])))
+            g.add((t_iri, NFL.abbreviation, Literal(abbr)))
+            if td.get("location"):
+                g.add((t_iri, NFL.location, Literal(td["location"])))
+            if td.get("short_name"):
+                g.add((t_iri, RDFS.label,   Literal(td["short_name"])))
+            div_key  = td.get("division",   DIVISION_MAP.get(abbr, ""))
+            conf_key = td.get("conference", CONFERENCE_MAP.get(abbr, ""))
+            if div_key:
+                g.add((t_iri, NFL.division,   NFL[div_key]))
+            if conf_key:
+                g.add((t_iri, NFL.conference, NFL[conf_key]))
+            # Register in holarchy
+            self._g_holarchy.add((t_iri, RDF.type,     NFL.Team))
+            self._g_holarchy.add((t_iri, NFL.hasInteriorGraph, GRAPH[f"team:{abbr}"]))
+            self._g_teams.add((t_iri, RDF.type, NFL.Team))
+            self._team_abbrs.add(abbr)
+
         if td.get("wins") is not None:
             # Use set() so repeated calls per week don't accumulate multiple values
             g.set((t_iri, NFL.wins,   Literal(td["wins"],   datatype=XSD.integer)))
             g.set((t_iri, NFL.losses, Literal(td["losses"], datatype=XSD.integer)))
             g.set((t_iri, NFL.ties,   Literal(td["ties"],   datatype=XSD.integer)))
-
-        div_key  = td.get("division",  DIVISION_MAP.get(abbr, ""))
-        conf_key = td.get("conference", CONFERENCE_MAP.get(abbr, ""))
-        if div_key:
-            g.add((t_iri, NFL.division,   NFL[div_key]))
-        if conf_key:
-            g.add((t_iri, NFL.conference, NFL[conf_key]))
-
-        # Register in holarchy
-        self._g_holarchy.add((t_iri, RDF.type,     NFL.Team))
-        self._g_holarchy.add((t_iri, NFL.hasInteriorGraph, GRAPH[f"team:{abbr}"]))
-        self._g_teams.add((t_iri, RDF.type, NFL.Team))
-        self._team_abbrs.add(abbr)
 
     def _insert_game(self, game: dict, g_week: Graph) -> None:
         g_iri  = _game_iri(game)

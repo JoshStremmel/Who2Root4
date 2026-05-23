@@ -111,7 +111,7 @@ class SeasonIngester:
         )
 
         for week in range(from_week, end_week + 1):
-            parsed = self._load_week(week)
+            parsed, fetched = self._load_week(week)
             if parsed is None:
                 logger.info("Week %d: no data available yet, stopping.", week)
                 break
@@ -149,8 +149,8 @@ class SeasonIngester:
                 week, len(games), len(self._all_games),
             )
 
-            # Polite delay between API calls
-            if week < end_week:
+            # Polite delay only when a real network request was made
+            if fetched and week < end_week:
                 time.sleep(self.request_delay)
 
         logger.info(
@@ -168,8 +168,8 @@ class SeasonIngester:
         logger.info("Ingesting postseason for season %d …", self.season)
 
         for week in range(1, POSTSEASON_WEEKS_COUNT + 1):
-            parsed = self._load_week(week,
-                                     season_type=SEASON_TYPE_POSTSEASON)
+            parsed, _fetched = self._load_week(week,
+                                               season_type=SEASON_TYPE_POSTSEASON)
             if parsed is None:
                 logger.debug("Postseason week %d: no data", week)
                 continue
@@ -372,13 +372,14 @@ class SeasonIngester:
         return self.cache_dir / f"scoreboard_{self.season}_{suffix}_w{week:02d}.json"
 
     def _load_week(self, week: int,
-                   season_type: int = SEASON_TYPE_REGULAR) -> dict[str, Any] | None:
+                   season_type: int = SEASON_TYPE_REGULAR) -> tuple[dict[str, Any] | None, bool]:
         """
-        Return a parsed scoreboard dict for the given week and season type.
+        Return (parsed_scoreboard, network_fetched) for the given week and season type.
         Uses disk cache if available and not force-refreshing.
-        Returns None if ESPN returns an empty/future week.
+        Returns (None, False) if ESPN returns an empty/future week.
         """
         path = self._cache_path(week, season_type)
+        network_fetched = False
 
         if not self.force_refresh and path.exists():
             logger.debug("Week %02d (type %d): cache hit %s", week, season_type, path)
@@ -392,12 +393,13 @@ class SeasonIngester:
             except Exception as exc:
                 logger.warning("Week %02d (type %d): fetch failed (%s)",
                                week, season_type, exc)
-                return None
+                return None, False
             path.write_text(json.dumps(raw, indent=2))
+            network_fetched = True
 
         parsed = parse_scoreboard(raw)
 
         if not parsed.get("games"):
-            return None
+            return None, network_fetched
 
-        return parsed
+        return parsed, network_fetched

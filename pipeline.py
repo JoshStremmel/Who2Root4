@@ -8,6 +8,9 @@ Quick start
     # Current week only, Bengals fan
     python pipeline.py --team CIN
 
+    # Fast mode: only rooting recommendations, no extra output
+    python pipeline.py --team CIN --full-season --fast
+
     # Specific week/season
     python pipeline.py --team CIN --week 14 --season 2025
 
@@ -72,6 +75,8 @@ def main() -> None:
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+    elif args.fast:
+        logging.getLogger().setLevel(logging.WARNING)
 
     builder = NFLGraphBuilder()
 
@@ -105,7 +110,8 @@ def main() -> None:
             ingester.ingest_postseason()
         ingester.write_temporal_edges()
         ingester.write_week_sequence_edges()
-        ingester.print_summary()
+        if not args.fast:
+            ingester.print_summary()
 
         all_games    = ingester.all_games()
         current_week = ingester.current_week()
@@ -158,7 +164,8 @@ def main() -> None:
     strength_map = computeAllTeamStrengths(all_games, parsed_standings or [])
     if strength_map:
         builder.add_team_strengths(strength_map)
-        print_strength_table(strength_map, parsed_standings or [])
+        if not args.fast:
+            print_strength_table(strength_map, parsed_standings or [])
 
     # Resolve division tiebreakers before graph enrichment so everything
     # downstream (competition edges, seeds, scenarios) uses consistent ordering.
@@ -192,30 +199,31 @@ def main() -> None:
 
     ds = builder.dataset
 
-    print_results(run_query(ds, ALL_TEAMS),              title="All Teams")
-    print_results(run_query(ds, DIVISION_LEADERS),       title="Division Leaders")
-    print_results(run_query(ds, ALL_IMPACT_EDGES),       title="All Impact Edges")
-    print_results(run_query(ds, ALL_ACTIVE_SCENARIOS),   title="Active Playoff Scenarios")
-    print_results(run_query(ds, DESTINY_CONTROL_GAMES),  title="Games That Control Destiny")
-    print_results(run_query(ds, GAMES_BY_WEEK),          title="Games by Week")
+    if not args.fast:
+        print_results(run_query(ds, ALL_TEAMS),              title="All Teams")
+        print_results(run_query(ds, DIVISION_LEADERS),       title="Division Leaders")
+        print_results(run_query(ds, ALL_IMPACT_EDGES),       title="All Impact Edges")
+        print_results(run_query(ds, ALL_ACTIVE_SCENARIOS),   title="Active Playoff Scenarios")
+        print_results(run_query(ds, DESTINY_CONTROL_GAMES),  title="Games That Control Destiny")
+        print_results(run_query(ds, GAMES_BY_WEEK),          title="Games by Week")
 
-    if args.full_season:
-        print_results(run_query(ds, WEEK_SEQUENCE),      title="Week Graph Sequence")
+        if args.full_season:
+            print_results(run_query(ds, WEEK_SEQUENCE),      title="Week Graph Sequence")
 
-    if parsed_standings:
-        print_results(run_query(ds, CURRENT_PLAYOFF_SEEDS), title="Current Playoff Seeds")
+        if parsed_standings:
+            print_results(run_query(ds, CURRENT_PLAYOFF_SEEDS), title="Current Playoff Seeds")
 
-    if args.team:
-        print_results(
-            run_query(ds, TEAM_FULL_SCHEDULE,
-                      bindings={"team_iri": f"urn:nfl:team:{args.team.upper()}"}),
-            title=f"{args.team.upper()} Full Schedule",
-        )
+        if args.team:
+            print_results(
+                run_query(ds, TEAM_FULL_SCHEDULE,
+                          bindings={"team_iri": f"urn:nfl:team:{args.team.upper()}"}),
+                title=f"{args.team.upper()} Full Schedule",
+            )
 
     # ── 5. Recommendations ────────────────────────────────────────────────────
 
     if args.team:
-        if scenario_builder:
+        if scenario_builder and not args.fast:
             scenario_builder.print_scenarios(args.team)
             print_results(
                 run_query(ds, SCENARIOS_FOR_TEAM,
@@ -417,6 +425,8 @@ def _parse_args() -> argparse.Namespace:
 
     p.add_argument("--verbose", "-v", action="store_true",
                    help="Debug-level logging")
+    p.add_argument("--fast",          action="store_true",
+                   help="Only show rooting recommendations — skip all other output")
     return p.parse_args()
 
 
