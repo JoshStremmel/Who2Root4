@@ -4,8 +4,6 @@ const { useState: useAppState, useEffect: useAppEffect, useRef: useAppRef, useMe
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "theme": "light",
-  "favTeam": "PIT",
-  "dislikes": ["BAL", "CIN"],
   "mode": "overall"
 } /*EDITMODE-END*/;
 
