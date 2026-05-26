@@ -7,6 +7,13 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "mode": "overall"
 } /*EDITMODE-END*/;
 
+// Team prefs (favTeam, dislikes) are persisted separately so the tweaks-panel
+// edit-mode host doesn't clobber them when it rewrites TWEAK_DEFAULTS.
+const __W2R4_TEAM_PREFS_KEY = "w2r4_team_prefs_v1";
+const __teamPrefs = (() => {
+  try { return JSON.parse(localStorage.getItem(__W2R4_TEAM_PREFS_KEY) || "{}"); } catch { return {}; }
+})();
+
 function TopNav({ tab, setTab, fav, setFav, theme, setTheme, onOpenOnboarding, user, onLogout }) {
   const [open, setOpen] = useAppState(false);
   const [userOpen, setUserOpen] = useAppState(false);
@@ -144,7 +151,7 @@ function TopNav({ tab, setTab, fav, setFav, theme, setTheme, onOpenOnboarding, u
 }
 
 function App() {
-  const [tw, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
+  const [tw, setTweak] = window.useTweaks({ ...TWEAK_DEFAULTS, ...__teamPrefs });
   const [tab, setTab] = useAppState("recs");
   const [detail, setDetail] = useAppState(null);
   // Auth + onboarding state. Session is hydrated from localStorage on first render
@@ -160,6 +167,13 @@ function App() {
     () => window.computeRecommendations(tw.favTeam, tw.dislikes, tw.mode || "overall"),
     [tw.favTeam, tw.dislikes, tw.mode]
   );
+
+  // Persist team prefs to localStorage so they survive page reloads.
+  useAppEffect(() => {
+    if (tw.favTeam) {
+      localStorage.setItem(__W2R4_TEAM_PREFS_KEY, JSON.stringify({ favTeam: tw.favTeam, dislikes: tw.dislikes || [] }));
+    }
+  }, [tw.favTeam, tw.dislikes]);
 
   // If the current mode becomes unreachable (e.g., user switches team), reset to overall.
   useAppEffect(() => {
@@ -200,7 +214,7 @@ function App() {
   if (!user) {
     return <window.Auth onAuthed={handleAuthed} />;
   }
-  if (onboarding) {
+  if (onboarding || !tw.favTeam) {
     return <window.Onboarding onFinish={finishOnboarding} />;
   }
 
