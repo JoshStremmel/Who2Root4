@@ -937,105 +937,283 @@ window.computeRecommendations = function (favAbbr, dislikes, mode = "overall") {
 window.computeScenarios = function (favAbbr) {
   const fav = window.TEAMS?.[favAbbr];
   if (!fav) return [];
-  const standings = window.computeStandings();
-  const seed = standings.byTeam[favAbbr] || {};
+
+  const standings    = window.computeStandings();
+  const seed         = standings.byTeam[favAbbr] || {};
+  const favWins      = fav.record[0];
+  const favLosses    = fav.record[1];
+
+  const gamesPlayed  = (t) => t.record[0] + t.record[1] + (t.record[2] || 0);
+  const teamRem      = (t) => Math.max(0, 17 - gamesPlayed(t));
+  // Use actual games remaining — weeksRemaining overcounts when a team has a bye
+  const favRem       = teamRem(fav);
+  const maxFavWins   = favWins + favRem;
+
   const divRivals = Object.values(window.TEAMS).filter(
     t => t.conf === fav.conf && t.div === fav.div && t.abbr !== favAbbr
   );
-  const confRivals = Object.values(window.TEAMS).filter(
-    t => t.conf === fav.conf && t.abbr !== favAbbr && t.div !== fav.div
-  ).sort((a, b) => winPct(b) - winPct(a));
+  const confTeams = Object.values(window.TEAMS)
+    .filter(t => t.conf === fav.conf)
+    .sort((a, b) => winPct(b) - winPct(a) || b.record[0] - a.record[0]);
 
-  const favWins = fav.record[0];
-  const favLosses = fav.record[1];
   const scenarios = [];
 
-  const topDivRival = [...divRivals].sort((a, b) => winPct(b) - winPct(a))[0];
-  if (!topDivRival) return [];
-  const leadsDivision = winPct(fav) > winPct(topDivRival);
-
-  if (leadsDivision) {
-    const gap = favWins - topDivRival.record[0];
-    scenarios.push({
-      id: "clinch-div-quick", kind: "clinch",
-      title: `Clinch the ${fav.conf} ${fav.div} this week`,
-      summary: `One ${fav.abbr} win plus a ${topDivRival.abbr} loss locks the division before December's last Sunday.`,
-      requires: [
-        { type: "win",  team: favAbbr,         rationale: "Hold serve at home" },
-        { type: "loss", team: topDivRival.abbr, rationale: `Drop ${topDivRival.abbr} another game back` },
-      ],
-      likelihood: 0.45 + Math.min(0.35, gap * 0.12),
-      urgency: gap >= 2 ? "high" : "med",
-    });
-    scenarios.push({
-      id: "clinch-div-slow", kind: "clinch",
-      title: `Clinch with two more wins`,
-      summary: `Win out the next two and the division is yours regardless of what the rest of the ${fav.div} does.`,
-      requires: [
-        { type: "win", team: favAbbr, rationale: "Win the road trip" },
-        { type: "win", team: favAbbr, rationale: "Win the home finale" },
-      ],
-      likelihood: 0.55, urgency: "med",
-    });
-  } else {
-    const gap = topDivRival.record[0] - favWins;
-    scenarios.push({
-      id: "catch-up", kind: "watch",
-      title: `Catch ${topDivRival.abbr} in the ${fav.div}`,
-      summary: `${gap}-game gap. You need ${topDivRival.abbr} to drop two of their next three while you win out.`,
-      requires: [
-        { type: "win",  team: favAbbr,         rationale: "Stay alive in the race" },
-        { type: "loss", team: topDivRival.abbr, rationale: "Open the door" },
-        { type: "loss", team: topDivRival.abbr, rationale: "Walk through it" },
-      ],
-      likelihood: Math.max(0.12, 0.4 - gap * 0.1),
-      urgency: gap >= 2 ? "high" : "med",
-    });
+  function magicSplit(myWins, myRem, theirWins, theirRem) {
+    const theirMax = theirWins + theirRem;
+    if (theirMax < myWins) return null;
+    const magic = theirMax - myWins + 1;
+    const total  = myRem + theirRem;
+    if (total === 0 || magic > total) return null;
+    let tWins   = Math.max(0, Math.min(Math.round(magic * myRem / total), myRem));
+    let rLosses = magic - tWins;
+    if (rLosses > theirRem) { rLosses = theirRem; tWins = Math.min(Math.max(0, magic - rLosses), myRem); }
+    return { winsNeeded: tWins, rivalLosses: rLosses };
   }
 
-  const onBubble = seed.kind === "wildcard" || (seed.kind === "out" && (seed.gamesBehind || 99) <= 1);
-  if (onBubble || !leadsDivision) {
-    const bubbleTeams = confRivals.filter(t => Math.abs(winPct(t) - winPct(fav)) <= 0.15).slice(0, 3);
-    if (bubbleTeams.length) {
+  function h2hList(vsAbbrs) {
+    const s = new Set(vsAbbrs);
+    return (window.SCHEDULE || [])
+      .filter(g => !g.completed && (g.home === favAbbr || g.away === favAbbr))
+      .map(g => g.home === favAbbr ? g.away : g.home)
+      .filter(a => s.has(a));
+  }
+
+  function makeWinReq(winsNeeded, vsAbbrs = []) {
+    const h2h = h2hList(vsAbbrs);
+    const rationale = winsNeeded <= h2h.length && h2h.length > 0
+      ? `Win ${winsNeeded} game${winsNeeded !== 1 ? 's' : ''} (vs ${h2h.slice(0, winsNeeded).join(" or ")})`
+      : `Win ${winsNeeded} of ${favRem} remaining games`;
+    return { type: "win", team: favAbbr, rationale, week: "Any remaining week" };
+  }
+
+  function makeLossReq(rival, losses, rem) {
+    return {
+      type: "loss", team: rival.abbr,
+      rationale: `Must go ${rem - losses}-${losses}+ or worse (${rem} games remaining)`,
+      week: "Any remaining week",
+    };
+  }
+
+  // ── Division scenarios ───────────────────────────────────────────────────
+  if (divRivals.length) {
+    const divClinched   = divRivals.every(r => favWins > r.record[0] + teamRem(r));
+    const divEliminated = divRivals.some(r => r.record[0] > maxFavWins);
+
+    if (divClinched) {
       scenarios.push({
-        id: "wc-clinch", kind: "clinch",
-        title: `Lock down a wild-card spot`,
-        summary: `${bubbleTeams.map(t => t.abbr).join(", ")} are all within a game. A ${fav.abbr} win plus any two of them losing puts you firmly in the bracket.`,
-        requires: [
-          { type: "win", team: favAbbr, rationale: "Hold your seed" },
-          ...bubbleTeams.slice(0, 2).map(t => ({ type: "loss", team: t.abbr, rationale: "Stack the tiebreaker" })),
-        ],
-        likelihood: 0.32, urgency: "high",
+        id: "div-clinched", kind: "clinched",
+        title: `${fav.conf} ${fav.div} title — Clinched`,
+        summary: `${favAbbr} has already secured the ${fav.div} division title.`,
+        requires: [], likelihood: 1.0, urgency: "low", isClinched: true,
       });
+    } else if (divEliminated) {
+      const leader = divRivals.find(r => r.record[0] > maxFavWins);
+      scenarios.push({
+        id: "div-eliminated", kind: "eliminated",
+        title: `Eliminated from the ${fav.conf} ${fav.div} title`,
+        summary: `${leader?.abbr} already has more wins than ${favAbbr}'s maximum possible total.`,
+        requires: [], likelihood: 0, urgency: "low", isClinched: true,
+      });
+    } else if (favRem > 0) {
+      // Path 1: Win every remaining game
+      const woRivalReqs = [];
+      for (const rival of divRivals) {
+        const rMax = rival.record[0] + teamRem(rival);
+        if (rMax >= maxFavWins) {
+          const needed = rMax - maxFavWins + 1;
+          woRivalReqs.push({ rival, losses: needed, rem: teamRem(rival) });
+        }
+      }
+      const req1 = [makeWinReq(favRem, divRivals.map(r => r.abbr))];
+      for (const { rival, losses, rem } of woRivalReqs) req1.push(makeLossReq(rival, losses, rem));
+      scenarios.push({
+        id: "div-clinch-1", kind: "clinch",
+        title: woRivalReqs.length === 0
+          ? `Clinch the ${fav.conf} ${fav.div} — Win out (no help needed)`
+          : `Clinch the ${fav.conf} ${fav.div} — Win every game`,
+        summary: woRivalReqs.length === 0
+          ? `${favAbbr} wins all ${favRem} remaining games and secures the division title outright.`
+          : `${favAbbr} wins all ${favRem} remaining — still needs ${woRivalReqs.map(r => `${r.rival.abbr} to drop ${r.losses}`).join(" and ")}.`,
+        requires: req1,
+        likelihood: Math.max(0.05, Math.min(0.90, 0.75 - woRivalReqs.length * 0.05)),
+        urgency: favRem <= 2 ? "high" : "med",
+      });
+
+      // Path 2: Proportional — fewer wins needed if rivals lose more (only show when different)
+      let propMaxWins = 0;
+      const propRivalReqs = [];
+      for (const rival of divRivals) {
+        const rRem = teamRem(rival);
+        const mn   = magicSplit(favWins, favRem, rival.record[0], rRem);
+        if (!mn) continue;
+        if (mn.winsNeeded > propMaxWins) propMaxWins = mn.winsNeeded;
+        if (mn.rivalLosses > 0) propRivalReqs.push({ rival, losses: mn.rivalLosses, rem: rRem });
+      }
+      if ((propMaxWins > 0 || propRivalReqs.length) && propMaxWins < favRem) {
+        const req2 = [];
+        if (propMaxWins > 0) req2.push(makeWinReq(propMaxWins, divRivals.map(r => r.abbr)));
+        for (const { rival, losses, rem } of propRivalReqs) req2.push(makeLossReq(rival, losses, rem));
+        const gap    = Math.max(0, ...divRivals.map(r => r.record[0] - favWins));
+        const lhood2 = Math.max(0.05, Math.min(0.88, 0.65 - gap * 0.10 - propMaxWins * 0.03));
+        const sp     = [];
+        if (propMaxWins > 0) sp.push(`${favAbbr} wins ${propMaxWins} more`);
+        if (propRivalReqs.length) sp.push(
+          propRivalReqs.map(({ rival, losses, rem }) => `${rival.abbr} goes ${rem - losses}-${losses}+ or worse`).join("; ")
+        );
+        scenarios.push({
+          id: "div-clinch-2", kind: "clinch",
+          title: `Clinch the ${fav.conf} ${fav.div} — Get some help`,
+          summary: sp.join(" — ") + ".",
+          requires: req2, likelihood: lhood2,
+          urgency: propMaxWins <= 2 ? "high" : propMaxWins <= 4 ? "med" : "low",
+        });
+      }
     }
   }
 
-  if (favLosses >= 6 && confRivals.length) {
-    scenarios.push({
-      id: "elim-watch", kind: "elimination",
-      title: `Mathematical elimination watch`,
-      summary: `Two more losses plus any two of (${confRivals.slice(0, 3).map(t => t.abbr).join(", ")}) winning out drops ${fav.abbr} out of contention.`,
-      requires: [
-        { type: "loss", team: favAbbr, rationale: "Slip on the road" },
-        { type: "loss", team: favAbbr, rationale: "Drop the next one" },
-        { type: "win",  team: confRivals[0].abbr, rationale: `${confRivals[0].abbr} pulls away` },
-      ],
-      likelihood: 0.18, urgency: "low",
-    });
+  // ── Wildcard scenarios ───────────────────────────────────────────────────
+  {
+    const isDivLeader = divRivals.length > 0 && divRivals.every(r => r.record[0] < favWins);
+
+    if (!isDivLeader) {
+      const teamsCanExceedCurrent = confTeams.filter(
+        t => t.abbr !== favAbbr && t.record[0] + teamRem(t) > favWins
+      ).length;
+      const wcClinched   = teamsCanExceedCurrent < 7;
+      const wcEliminated = confTeams.filter(t => t.abbr !== favAbbr && t.record[0] > maxFavWins).length >= 7;
+
+      if (wcClinched) {
+        scenarios.push({
+          id: "wc-clinched", kind: "clinched",
+          title: `${fav.conf} playoff berth — Clinched`,
+          summary: `${favAbbr} has mathematically secured a playoff spot.`,
+          requires: [], likelihood: 1.0, urgency: "low", isClinched: true,
+        });
+      } else if (wcEliminated) {
+        scenarios.push({
+          id: "wc-eliminated", kind: "eliminated",
+          title: `Eliminated from ${fav.conf} playoff contention`,
+          summary: `${favAbbr} is mathematically eliminated from the playoffs.`,
+          requires: [], likelihood: 0, urgency: "low", isClinched: true,
+        });
+      } else {
+        // Path 1: Win-out self-clinch — does winning everything guarantee a spot?
+        const teamsCanExceedMax = confTeams.filter(
+          t => t.abbr !== favAbbr && t.record[0] + teamRem(t) > maxFavWins
+        ).length;
+        if (teamsCanExceedMax < 7 && favRem > 0) {
+          scenarios.push({
+            id: "wc-clinch-1", kind: "clinch",
+            title: `Lock down a ${fav.conf} wildcard — Control your destiny`,
+            summary: `${favAbbr} wins all ${favRem} remaining games and clinches without needing any help.`,
+            requires: [makeWinReq(favRem)],
+            likelihood: Math.max(0.10, 0.65 - favRem * 0.06),
+            urgency: favRem <= 2 ? "high" : "med",
+          });
+        }
+
+        // Path 2: Proportional — hold off teams currently chasing from below
+        // Only teams with fewer wins than fav who can still catch up are real threats
+        const dangerTeams = confTeams.filter(
+          t => t.abbr !== favAbbr &&
+            t.record[0] < favWins &&
+            t.record[0] + teamRem(t) >= favWins
+        ).slice(0, 3);
+
+        if (dangerTeams.length > 0) {
+          let wcMaxWins = 0;
+          const wcRivalReqs = [];
+          for (const danger of dangerTeams) {
+            const dRem = teamRem(danger);
+            const mn   = magicSplit(favWins, favRem, danger.record[0], dRem);
+            if (!mn) continue;
+            if (mn.winsNeeded > wcMaxWins) wcMaxWins = mn.winsNeeded;
+            if (mn.rivalLosses > 0) wcRivalReqs.push({ rival: danger, losses: mn.rivalLosses, rem: dRem });
+          }
+          if (wcMaxWins < favRem && (wcMaxWins > 0 || wcRivalReqs.length)) {
+            const req2 = [];
+            if (wcMaxWins > 0) req2.push(makeWinReq(wcMaxWins, dangerTeams.map(t => t.abbr)));
+            for (const { rival, losses, rem } of wcRivalReqs) req2.push(makeLossReq(rival, losses, rem));
+            const sp2 = [];
+            if (wcMaxWins > 0) sp2.push(`${favAbbr} wins ${wcMaxWins} more`);
+            if (wcRivalReqs.length) sp2.push(
+              wcRivalReqs.map(({ rival, losses, rem }) => `${rival.abbr} goes ${rem - losses}-${losses}+ or worse`).join("; ")
+            );
+            scenarios.push({
+              id: "wc-clinch-2", kind: "clinch",
+              title: `Lock down a ${fav.conf} wildcard — Hold off the pack`,
+              summary: sp2.join(" — ") + ".",
+              requires: req2,
+              likelihood: Math.max(0.05, Math.min(0.80, 0.55 - wcMaxWins * 0.04)),
+              urgency: seed.kind === "out" ? "high" : "med",
+            });
+          }
+        }
+      }
+    }
   }
 
-  if ([1, 2, 3].includes(seed.seed) && confRivals.length) {
-    scenarios.push({
-      id: "bye-chase", kind: "clinch",
-      title: `Climb to the #1 seed (bye + home through the playoffs)`,
-      summary: `Three wins to close plus a single loss from the current conference leader gives ${fav.abbr} the top seed.`,
-      requires: [
-        { type: "win", team: favAbbr, rationale: "Run the table" },
-        { type: "loss", team: confRivals.find(t => winPct(t) > winPct(fav))?.abbr || confRivals[0].abbr,
-          rationale: "Top seed slips" },
-      ],
-      likelihood: 0.22, urgency: "med",
-    });
+  // ── Elimination watch ────────────────────────────────────────────────────
+  {
+    const definitivelyOut = confTeams.filter(t => t.abbr !== favAbbr && t.record[0] > maxFavWins).length >= 7;
+    if (!definitivelyOut && favLosses >= 6) {
+      // Only teams currently BEHIND fav that could catch up are real threats.
+      // Teams already ahead (NE, DEN etc.) don't need to "keep winning" to hurt fav.
+      const threats = confTeams.filter(
+        t => t.abbr !== favAbbr &&
+          t.record[0] < favWins &&             // currently behind fav
+          t.record[0] + teamRem(t) >= favWins  // can match or exceed fav's current wins
+      ).slice(0, 3);
+
+      // How many teams are definitively ahead already?
+      const definitivelyAhead = confTeams.filter(
+        t => t.abbr !== favAbbr && t.record[0] >= favWins
+      ).length;
+
+      // Show watch when close to the 7-team cutoff (4+ ahead) and at least 2 chasers
+      if (threats.length >= 2 && definitivelyAhead >= 4) {
+        scenarios.push({
+          id: "elim-watch", kind: "elimination",
+          title: `Elimination watch — ${fav.conf} wild card`,
+          summary: `${threats.map(t => t.abbr).join(" and ")} are chasing from behind with ${favRem} games remaining.`,
+          requires: [
+            { type: "loss", team: favAbbr, rationale: "Another loss opens the door for chasers", week: "Any remaining week" },
+            { type: "win", team: threats[0].abbr, rationale: `${threats[0].abbr} (${threats[0].record[0]}W) gains ground`, week: "Any remaining week" },
+            ...(threats[1] ? [{ type: "win", team: threats[1].abbr, rationale: `${threats[1].abbr} (${threats[1].record[0]}W) also gains ground`, week: "Any remaining week" }] : []),
+          ],
+          likelihood: 0.18, urgency: "low",
+        });
+      }
+    }
+  }
+
+  // ── #1 seed / bye chase ──────────────────────────────────────────────────
+  if ([1, 2, 3].includes(seed.seed)) {
+    const confLeader = confTeams[0];
+    if (confLeader.abbr !== favAbbr) {
+      const lRem = teamRem(confLeader);
+      const mn   = magicSplit(favWins, favRem, confLeader.record[0], lRem);
+      if (mn) {
+        const requires = [];
+        if (mn.winsNeeded > 0) requires.push({
+          type: "win", team: favAbbr,
+          rationale: `Win ${mn.winsNeeded} of ${favRem} remaining games`,
+          week: "Any remaining week",
+        });
+        if (mn.rivalLosses > 0) requires.push({
+          type: "loss", team: confLeader.abbr,
+          rationale: `Must go ${lRem - mn.rivalLosses}-${mn.rivalLosses}+ or worse`,
+          week: "Any remaining week",
+        });
+        scenarios.push({
+          id: "bye-chase", kind: "clinch",
+          title: `Climb to the #1 seed (bye week + home field)`,
+          summary: `${favAbbr} needs ${mn.winsNeeded} more win${mn.winsNeeded !== 1 ? 's' : ''} and ${confLeader.abbr} to stumble.`,
+          requires,
+          likelihood: 0.22, urgency: "med",
+        });
+      }
+    }
   }
 
   return scenarios;

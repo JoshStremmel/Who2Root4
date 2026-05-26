@@ -68,7 +68,7 @@ def main() -> None:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # ── 1. Initialise HolonicDataset ──────────────────────────────────────────
+    # ── 1. Initialise HolonicDataset ─────────────────────────────────────────
     if args.fuseki:
         from holonic.backends import FusekiBackend
         backend = FusekiBackend(args.fuseki)
@@ -77,6 +77,11 @@ def main() -> None:
     else:
         ds = HolonicDataset(metadata_updates="off")
         logger.info("Using in-memory rdflib backend")
+
+    if args.verbose:
+        ds.on_validation(
+            lambda r: logger.debug("Membrane  %s → %s", r.holon_iri, r.health)
+        )
 
     holonic_builder = NFLHolonicBuilder(ds)
 
@@ -206,17 +211,22 @@ def main() -> None:
             validator.print_team_health(args.team)
 
     # ── 7. Summary via holonic API ────────────────────────────────────────────
-    print(ds.summary())
+    summary = ds.holarchy_summary()
+    print(f"\n  Holarchy:")
+    print(f"    Holons   : {summary.holon_count}")
+    print(f"    Portals  : {summary.portal_count}")
+    print(f"    Roots    : {summary.root_count}")
+    if summary.staleness_count:
+        print(f"    Stale    : {summary.staleness_count}")
+    if summary.health_distribution:
+        dist_str = "  ".join(f"{k}:{v}" for k, v in summary.health_distribution.items())
+        print(f"    Health   : {dist_str}")
 
     # List all holons
     holons = ds.list_holons_summary()
-    print(f"\n  Total holons registered: {len(holons)}")
+    print(f"\n  Holons ({len(holons)})")
     for h in sorted(holons, key=lambda x: x.label or ""):
         print(f"    {h.label:35s}  {h.iri}")
-
-    # List portals
-    portals = ds.list_portals()
-    print(f"\n  Total portals registered: {len(portals)}")
 
     # ── 8. Scenarios (printed from scenario_builder) ──────────────────────────
     if scenario_builder and args.team:

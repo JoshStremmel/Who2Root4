@@ -129,13 +129,12 @@ class MembraneValidator:
             try:
                 result = self.ds.validate_membrane(holon.iri)
                 results.append(result)
-                health = str(result.health).lower()
-                if "violation" in health:
-                    violation += 1
-                elif "warning" in health or "compromised" in health:
-                    warning += 1
-                else:
+                if result.is_healthy:
                     healthy += 1
+                elif "violation" in str(result.health).lower():
+                    violation += 1
+                else:
+                    warning += 1
             except Exception as exc:
                 logger.debug("validate_membrane skipped for %s: %s", holon.iri, exc)
 
@@ -171,23 +170,26 @@ class MembraneValidator:
         ]
         warnings = [
             r for r in report["results"]
-            if "warning" in str(r.health).lower()
-                or "compromised" in str(r.health).lower()
+            if not r.is_healthy and "violation" not in str(r.health).lower()
         ]
 
         if violations:
             print(f"\n  VIOLATIONS ({len(violations)})")
             print(f"  {'─'*55}")
-            for r in violations[:10]:   # cap at 10 for readability
+            for r in violations[:10]:
                 print(f"  ✗ {r.holon_iri}")
-                for v in (r.violations or [])[:3]:
-                    print(f"      • {getattr(v, 'message', str(v))}")
+                for v in (r.shape_violations or [])[:3]:
+                    sev  = f"[{v.severity}] " if getattr(v, 'severity', None) else ""
+                    path = f" at {v.path}" if getattr(v, 'path', None) else ""
+                    print(f"      • {sev}{v.message}{path}")
 
         if warnings:
             print(f"\n  WARNINGS ({len(warnings)})")
             print(f"  {'─'*55}")
             for r in warnings[:10]:
                 print(f"  ⚠ {r.holon_iri}")
+                for v in (r.shape_violations or [])[:2]:
+                    print(f"      • {v.message}")
 
         print()
 
@@ -195,8 +197,10 @@ class MembraneValidator:
         """Print membrane health for a specific team."""
         result = self.validate_team(abbr)
         health = str(result.health)
-        icon   = "✓" if "healthy" in health.lower() else (
+        icon   = "✓" if result.is_healthy else (
                  "⚠" if "warning" in health.lower() else "✗")
         print(f"\n  {icon} {abbr} membrane: {health}")
-        for v in (result.violations or []):
-            print(f"    • {getattr(v, 'message', str(v))}")
+        for v in (result.shape_violations or []):
+            sev  = f"[{v.severity}] " if getattr(v, 'severity', None) else ""
+            path = f" at {v.path}" if getattr(v, 'path', None) else ""
+            print(f"    • {sev}{v.message}{path}")

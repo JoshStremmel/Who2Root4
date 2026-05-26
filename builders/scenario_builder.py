@@ -50,12 +50,17 @@ SCENARIO = Namespace("urn:nfl:scenario:")
 class Scenario:
     iri:            str
     label:          str
-    beneficiary:    str          # team abbr
+    beneficiary:    str
     scenario_type:  str          # "clinch_division" | "clinch_wildcard" | "eliminated_division" | "eliminated_wildcard"
-    required_wins:  list[str]    # team abbrs that must WIN
-    required_losses: list[str]   # team abbrs that must LOSE
-    remaining_games: int         # how many requirements are still unresolved
-    is_active:      bool         # False if already clinched / already eliminated
+    required_wins:  list[str]    # team abbrs that must WIN (for RDF/impact edges)
+    required_losses: list[str]   # team abbrs that must LOSE (for RDF/impact edges)
+    remaining_games: int         # total combined "events" still needed
+    is_active:      bool         # False = already clinched or already eliminated
+    # Count-based display fields
+    wins_needed:    int = 0
+    key_wins_vs:    list[str] = field(default_factory=list)         # specific opponents on remaining schedule worth highlighting
+    rival_losses_needed: dict[str, int] = field(default_factory=dict)  # rival -> min additional losses they need
+    rival_games_remaining: dict[str, int] = field(default_factory=dict) # rival -> their remaining game count
 
 
 class ScenarioBuilder:
@@ -68,12 +73,12 @@ class ScenarioBuilder:
         self,
         dataset: Dataset,
         standings: list[dict],
-        games: list[dict] | None = None,   # all parsed game dicts (any week)
+        games: list[dict] | None = None,
         tiebreaker_order: dict[str, list[str]] | None = None,
     ) -> None:
-        self.dataset         = dataset
-        self.standings       = {s["abbr"]: s for s in standings}
-        self.games           = games or []
+        self.dataset          = dataset
+        self.standings        = {s["abbr"]: s for s in standings}
+        self.games            = games or []
         self.tiebreaker_order = tiebreaker_order or {}
         self._g        = dataset.graph(GRAPH["scenarios"])
         self._g.bind("scenario", SCENARIO)
@@ -81,9 +86,7 @@ class ScenarioBuilder:
         self._g.bind("nfl",      NFL)
         self._scenarios: list[Scenario] = []
 
-        # Pre-compute remaining schedule per team
         self._remaining: dict[str, list[dict]] = self._index_remaining_games()
-        # Pre-compute completed outcomes per team
         self._completed_wins:   dict[str, set[str]] = self._index_completed_wins()
         self._completed_losses: dict[str, set[str]] = self._index_completed_losses()
 
@@ -101,13 +104,11 @@ class ScenarioBuilder:
             conf = CONFERENCE_MAP.get(abbr, "")
             div  = DIVISION_MAP.get(abbr, "")
 
-            # Division clinch scenario
             div_scenario = self._build_division_clinch(abbr, div, conf, sd)
             if div_scenario:
                 self._write_scenario(div_scenario)
                 self._scenarios.append(div_scenario)
 
-            # Wildcard clinch scenario
             wc_scenario = self._build_wildcard_clinch(abbr, conf, sd)
             if wc_scenario:
                 self._write_scenario(wc_scenario)
@@ -120,7 +121,6 @@ class ScenarioBuilder:
         For every team, generate elimination scenarios:
           - eliminated_division  (cannot win their division)
           - eliminated_wildcard  (cannot reach any playoff berth)
-        A team can be division-eliminated while still alive for a wildcard spot.
         """
         count = 0
         for abbr, sd in self.standings.items():
@@ -137,21 +137,17 @@ class ScenarioBuilder:
         """
         For each active scenario, write impact:controlsDestiny edges
         from each required game outcome → the beneficiary team.
-        This lets the recommendation engine find scenarios via SPARQL.
         """
         g_out = self.dataset.graph(GRAPH["outcomes"])
         for sc in self._scenarios:
             if not sc.is_active:
                 continue
             ben_iri = _team_iri(sc.beneficiary)
-            sc_iri  = URIRef(sc.iri)
-            # Each required win: if that team wins, it helps the beneficiary
             for win_abbr in sc.required_wins:
                 out_iri = self._latest_outcome_iri(win_abbr, win=True)
                 if out_iri:
                     g_out.add((out_iri, IMPACT.controlsDestiny, ben_iri))
                     g_out.add((out_iri, IMPACT.helps,           ben_iri))
-            # Each required loss: if that team loses, it helps the beneficiary
             for loss_abbr in sc.required_losses:
                 out_iri = self._latest_outcome_iri(loss_abbr, win=False)
                 if out_iri:
@@ -170,7 +166,7 @@ class ScenarioBuilder:
             print("  No scenarios found.")
             return
 
-        header = f"Playoff Scenarios" + (f" — {team_abbr.upper()}" if team_abbr else "")
+        header = "Playoff Scenarios" + (f" — {team_abbr.upper()}" if team_abbr else "")
         print(f"\n{'='*65}")
         print(f"  {header}")
         print(f"{'='*65}")
@@ -184,11 +180,14 @@ class ScenarioBuilder:
                 status = "* CLINCHED"
             print(f"\n  [{status}] {sc.label}")
             print(f"           Type: {sc.scenario_type}")
-            if sc.required_wins:
-                print(f"           Need wins from:   {', '.join(sc.required_wins)}")
-            if sc.required_losses:
-                print(f"           Need losses from: {', '.join(sc.required_losses)}")
-            print(f"           Remaining unresolved: {sc.remaining_games} game(s)")
+
+            if sc.is_active and sc.scenario_type in ("clinch_division", "clinch_wildcard"):
+                team_rem = len(self._remaining.get(sc.beneficiary, []))
+                _print_clinch_path(sc, team_rem)
+            elif sc.is_active and sc.scenario_type in ("eliminated_division", "eliminated_wildcard"):
+                if sc.required_wins:
+                    print(f"           Eliminated by: {', '.join(sc.required_wins)}")
+
         print()
 
     # ── Scenario construction ─────────────────────────────────────────────────
@@ -197,125 +196,259 @@ class ScenarioBuilder:
         self, abbr: str, div: str, conf: str, sd: dict
     ) -> Scenario | None:
         """
-        Division clinch: team needs to win out AND all division rivals
-        need to lose enough games that they can't catch up.
+        Division clinch: most likely path for the team to finish first in their division.
+
+        Uses a proportional magic-number split: for each rival, the combined
+        "clinch events" needed (team wins + rival losses) are split between the
+        two teams proportionally to their remaining game counts.
         """
         rivals = [r for r in DIVISION_RIVALS.get(div, []) if r != abbr]
         if not rivals:
             return None
 
-        team_wins   = sd["wins"]
-        team_losses = sd["losses"]
-        team_remaining = len(self._remaining.get(abbr, []))
+        team_wins      = sd["wins"]
+        team_rem_list  = self._remaining.get(abbr, [])
+        team_remaining = len(team_rem_list)
+        max_team_wins  = team_wins + team_remaining
 
-        # Check if any rival can still match the team's max possible wins
-        max_team_wins = team_wins + team_remaining
-        required_losses: list[str] = []
-        is_active = False
+        # Already mathematically eliminated: a rival's current wins exceed our ceiling
+        if any(
+            self.standings.get(r, {}).get("wins", 0) > max_team_wins
+            for r in rivals
+        ):
+            return None
 
-        for rival_abbr in rivals:
-            rival_sd = self.standings.get(rival_abbr, {})
-            rival_wins = rival_sd.get("wins", 0)
-            rival_remaining = len(self._remaining.get(rival_abbr, []))
-            rival_max = rival_wins + rival_remaining
-            if rival_max > max_team_wins:
-                required_losses.append(rival_abbr)
-            elif rival_max == max_team_wins:
-                # Tied at the ceiling — simulate remaining schedule to check TB
-                if not self._sim_wins_out_tiebreaker(abbr, rival_abbr, div):
-                    required_losses.append(rival_abbr)
-
-        # required_wins: only include team when a rival can still reach team's wins
-        rival_can_match = any(
-            self.standings.get(r, {}).get("wins", 0) + len(self._remaining.get(r, []))
-            >= team_wins
+        # Already clinched: team's current wins exceed every rival's maximum possible
+        already_clinched = all(
+            team_wins > self.standings.get(r, {}).get("wins", 0) + len(self._remaining.get(r, []))
             for r in rivals
         )
-        required_wins = [abbr] if (team_remaining > 0 and rival_can_match) else []
+        if already_clinched:
+            return Scenario(
+                iri=str(SCENARIO[f"{abbr}_ClinchDivision_{div}"]),
+                label=f"{abbr} clinches {div} division title",
+                beneficiary=abbr,
+                scenario_type="clinch_division",
+                required_wins=[],
+                required_losses=[],
+                remaining_games=0,
+                is_active=False,
+            )
 
-        is_active = bool(required_wins) or bool(required_losses)
+        # Per-rival magic numbers and proportional requirements
+        rival_losses_needed:    dict[str, int] = {}
+        rival_games_remaining:  dict[str, int] = {}
+        wins_needed = 0
 
-        remaining = (
-            len([r for r in required_wins  if r not in self._completed_wins.get(abbr, set())]) +
-            len([r for r in required_losses if r not in self._completed_losses.get(abbr, set())])
-        )
+        for rival in rivals:
+            rival_sd   = self.standings.get(rival, {})
+            rival_wins = rival_sd.get("wins", 0)
+            rival_rem  = len(self._remaining.get(rival, []))
+            rival_games_remaining[rival] = rival_rem
+            rival_max  = rival_wins + rival_rem
 
-        slug    = f"{abbr}_ClinchDivision_{div}"
-        sc_iri  = str(SCENARIO[slug])
-        label   = f"{abbr} clinches {div} division title"
+            if rival_max < team_wins:
+                continue  # already ahead of this rival
+
+            # Combined events needed: team wins + rival losses
+            magic = rival_max - team_wins + 1
+            if magic <= 0:
+                continue
+
+            total_rem = team_remaining + rival_rem
+            if total_rem == 0 or magic > total_rem:
+                continue  # impossible to achieve via game results alone
+
+            # Proportional split: each side bears its share
+            t_wins = max(0, min(round(magic * team_remaining / total_rem), team_remaining))
+            r_losses = magic - t_wins
+
+            # Clamp rival losses to feasible
+            if r_losses > rival_rem:
+                r_losses = rival_rem
+                t_wins   = min(max(0, magic - r_losses), team_remaining)
+
+            wins_needed = max(wins_needed, t_wins)
+            if r_losses > 0:
+                rival_losses_needed[rival] = r_losses
+
+        if not wins_needed and not rival_losses_needed:
+            return Scenario(
+                iri=str(SCENARIO[f"{abbr}_ClinchDivision_{div}"]),
+                label=f"{abbr} clinches {div} division title",
+                beneficiary=abbr,
+                scenario_type="clinch_division",
+                required_wins=[],
+                required_losses=[],
+                remaining_games=0,
+                is_active=False,
+            )
+
+        # Key matchups: remaining games the team still plays against their division rivals
+        rival_set = set(rivals)
+        key_wins_vs: list[str] = []
+        seen: set[str] = set()
+        for game in team_rem_list:
+            opp = game["away"]["abbr"] if game["home"]["abbr"] == abbr else game["home"]["abbr"]
+            if opp in rival_set and opp not in seen:
+                key_wins_vs.append(opp)
+                seen.add(opp)
+
+        required_wins  = [abbr] if wins_needed > 0 else []
+        required_losses = list(rival_losses_needed.keys())
+        remaining_count = wins_needed + sum(rival_losses_needed.values())
 
         return Scenario(
-            iri             = sc_iri,
-            label           = label,
-            beneficiary     = abbr,
-            scenario_type   = "clinch_division",
-            required_wins   = required_wins,
-            required_losses = required_losses,
-            remaining_games = remaining,
-            is_active       = is_active,
+            iri=str(SCENARIO[f"{abbr}_ClinchDivision_{div}"]),
+            label=f"{abbr} clinches {div} division title",
+            beneficiary=abbr,
+            scenario_type="clinch_division",
+            required_wins=required_wins,
+            required_losses=required_losses,
+            remaining_games=remaining_count,
+            is_active=True,
+            wins_needed=wins_needed,
+            key_wins_vs=key_wins_vs,
+            rival_losses_needed=rival_losses_needed,
+            rival_games_remaining=rival_games_remaining,
         )
 
     def _build_wildcard_clinch(
         self, abbr: str, conf: str, sd: dict
     ) -> Scenario | None:
         """
-        Wildcard clinch: team needs to be in the top 7 of their conference.
-        Requires beating out teams currently in positions 8+ who could overtake.
+        Wildcard clinch: most likely path to securing a top-7 conference berth.
+
+        A team is already clinched only when it's mathematically impossible for
+        7 or more conference opponents to all exceed the team's current win total
+        (i.e., team can't fall out of the top 7 even losing every remaining game).
         """
         conf_teams = sorted(
             [s for s in self.standings.values() if CONFERENCE_MAP.get(s["abbr"]) == conf],
-            key=lambda t: t["win_pct"],
+            key=lambda t: (t["win_pct"], t["wins"]),
             reverse=True,
         )
 
-        team_rank = next(
-            (i for i, t in enumerate(conf_teams) if t["abbr"] == abbr), None
-        )
-        if team_rank is None:
+        team_idx = next((i for i, t in enumerate(conf_teams) if t["abbr"] == abbr), None)
+        if team_idx is None:
             return None
 
-        # Already a division leader → wildcard scenario not the primary path
-        div = DIVISION_MAP.get(abbr, "")
+        # Skip: team clearly leads their division → division clinch is the primary scenario
+        div       = DIVISION_MAP.get(abbr, "")
         div_rivals = [r for r in DIVISION_RIVALS.get(div, []) if r != abbr]
-        best_rival = max(
-            (self.standings.get(r, {}).get("wins", 0) for r in div_rivals), default=0
-        )
-        if sd["wins"] > best_rival:
-            return None  # leads division outright
-        # Tied with best rival but holds division lead by tiebreaker
-        div_order = self.tiebreaker_order.get(div, [])
-        if div_order and div_order[0] == abbr:
-            return None  # division clinch is the relevant scenario
+        if div_rivals:
+            best_rival_wins = max(
+                self.standings.get(r, {}).get("wins", 0) for r in div_rivals
+            )
+            if sd["wins"] > best_rival_wins:
+                return None
+            div_order = self.tiebreaker_order.get(div, [])
+            if div_order and div_order[0] == abbr:
+                return None
 
-        # Teams currently ranked 8–10 who could jump into wildcard spots
-        bubble_teams = [
-            t["abbr"] for t in conf_teams[7:10]
-            if t["abbr"] != abbr and
-               t["wins"] + len(self._remaining.get(t["abbr"], [])) >= sd["wins"]
+        team_wins      = sd["wins"]
+        team_rem_list  = self._remaining.get(abbr, [])
+        team_remaining = len(team_rem_list)
+
+        # Already clinched: fewer than 7 conference opponents can possibly finish with
+        # MORE wins than the team's current win total (team is mathematically locked in)
+        teams_that_can_exceed = [
+            t for t in conf_teams
+            if t["abbr"] != abbr
+            and t["wins"] + len(self._remaining.get(t["abbr"], [])) > team_wins
         ]
+        if len(teams_that_can_exceed) < 7:
+            return Scenario(
+                iri=str(SCENARIO[f"{abbr}_ClinchWildcard_{conf}"]),
+                label=f"{abbr} clinches {conf} wildcard berth",
+                beneficiary=abbr,
+                scenario_type="clinch_wildcard",
+                required_wins=[],
+                required_losses=[],
+                remaining_games=0,
+                is_active=False,
+            )
 
-        required_losses = bubble_teams[:3]   # top threats only
-        required_wins   = [abbr] if len(self._remaining.get(abbr, [])) > 0 else []
-        is_active       = team_rank >= 7 or bool(required_losses)
+        # Already eliminated from all playoff contention
+        if self._already_wildcard_eliminated(abbr, sd):
+            return None
 
-        remaining = (
-            len([r for r in required_wins  if r not in self._completed_wins.get(abbr, set())]) +
-            len([r for r in required_losses if r not in self._completed_losses.get(abbr, set())])
-        )
+        # Identify the biggest threats: non-top-7 teams that could jump in at team's expense
+        current_top7_set = {t["abbr"] for t in conf_teams[:7]}
+        danger_teams = sorted(
+            [t for t in conf_teams
+             if t["abbr"] != abbr
+             and t["abbr"] not in current_top7_set
+             and t["wins"] + len(self._remaining.get(t["abbr"], [])) >= team_wins],
+            key=lambda t: t["wins"] + len(self._remaining.get(t["abbr"], [])),
+            reverse=True,
+        )[:4]
 
-        slug   = f"{abbr}_ClinchWildcard_{conf}"
-        sc_iri = str(SCENARIO[slug])
-        label  = f"{abbr} clinches {conf} wildcard berth"
+        # Calculate wins needed and rival loss requirements
+        wins_needed:           int              = 0
+        rival_losses_needed:   dict[str, int]   = {}
+        rival_games_remaining: dict[str, int]   = {}
+
+        for danger in danger_teams:
+            d_abbr = danger["abbr"]
+            d_wins = danger["wins"]
+            d_rem  = len(self._remaining.get(d_abbr, []))
+            rival_games_remaining[d_abbr] = d_rem
+            d_max  = d_wins + d_rem
+
+            if d_max < team_wins:
+                continue
+
+            magic = d_max - team_wins + 1
+            if magic <= 0:
+                continue
+
+            total_rem = team_remaining + d_rem
+            if total_rem == 0 or magic > total_rem:
+                continue
+
+            t_wins  = max(0, min(round(magic * team_remaining / total_rem), team_remaining))
+            r_losses = magic - t_wins
+
+            if r_losses > d_rem:
+                r_losses = d_rem
+                t_wins   = min(max(0, magic - r_losses), team_remaining)
+
+            wins_needed = max(wins_needed, t_wins)
+            if r_losses > 0:
+                rival_losses_needed[d_abbr] = r_losses
+
+        # Cap required_losses at 3 (top threats only)
+        required_losses = list(rival_losses_needed.keys())[:3]
+        rival_losses_needed = {k: rival_losses_needed[k] for k in required_losses}
+
+        # Key matchups: remaining games against conference danger teams
+        danger_set = {d["abbr"] for d in danger_teams}
+        key_wins_vs: list[str] = []
+        seen: set[str] = set()
+        for game in team_rem_list:
+            opp = game["away"]["abbr"] if game["home"]["abbr"] == abbr else game["home"]["abbr"]
+            if opp in danger_set and opp not in seen:
+                key_wins_vs.append(opp)
+                seen.add(opp)
+
+        required_wins   = [abbr] if wins_needed > 0 else []
+        remaining_count = wins_needed + sum(rival_losses_needed.values())
+        is_active       = wins_needed > 0 or bool(rival_losses_needed)
 
         return Scenario(
-            iri             = sc_iri,
-            label           = label,
-            beneficiary     = abbr,
-            scenario_type   = "clinch_wildcard",
-            required_wins   = required_wins,
-            required_losses = required_losses,
-            remaining_games = remaining,
-            is_active       = is_active,
+            iri=str(SCENARIO[f"{abbr}_ClinchWildcard_{conf}"]),
+            label=f"{abbr} clinches {conf} wildcard berth",
+            beneficiary=abbr,
+            scenario_type="clinch_wildcard",
+            required_wins=required_wins,
+            required_losses=required_losses,
+            remaining_games=remaining_count,
+            is_active=is_active,
+            wins_needed=wins_needed,
+            key_wins_vs=key_wins_vs,
+            rival_losses_needed=rival_losses_needed,
+            rival_games_remaining=rival_games_remaining,
         )
 
     def _build_division_elimination(self, abbr: str, sd: dict) -> Scenario | None:
@@ -324,7 +457,7 @@ class ScenarioBuilder:
         Distinct from wildcard elimination — a team can be division-eliminated
         while still in the wild card race.
         """
-        div      = DIVISION_MAP.get(abbr, "")
+        div       = DIVISION_MAP.get(abbr, "")
         div_rivals = [r for r in DIVISION_RIVALS.get(div, []) if r != abbr]
         if not div_rivals:
             return None
@@ -338,39 +471,36 @@ class ScenarioBuilder:
             for r in div_rivals
         )
 
-        # Rivals who could still surpass our maximum win total
         eliminators = [
             r for r in div_rivals
             if self.standings.get(r, {}).get("wins", 0) + len(self._remaining.get(r, [])) > max_team_wins
         ][:4]
 
         if not eliminators and not already_eliminated:
-            return None  # team leads their division outright
+            return None
 
         slug   = f"{abbr}_EliminatedDivision_{div}"
         sc_iri = str(SCENARIO[slug])
         label  = f"{abbr} eliminated from {div} division race"
 
         return Scenario(
-            iri             = sc_iri,
-            label           = label,
-            beneficiary     = abbr,
-            scenario_type   = "eliminated_division",
-            required_wins   = eliminators,
-            required_losses = [],
-            remaining_games = 0,
-            is_active       = not already_eliminated,
+            iri=sc_iri,
+            label=label,
+            beneficiary=abbr,
+            scenario_type="eliminated_division",
+            required_wins=eliminators,
+            required_losses=[],
+            remaining_games=0,
+            is_active=not already_eliminated,
         )
 
     def _build_wildcard_elimination(self, abbr: str, sd: dict) -> Scenario | None:
         """
         Wildcard elimination: team cannot reach any playoff berth (top 7 in conference).
-        Only reaches this state after 7+ conference peers already exceed our max wins.
         """
         conf = CONFERENCE_MAP.get(abbr, "")
         div  = DIVISION_MAP.get(abbr, "")
 
-        # Division leaders cannot be wildcard-eliminated — they hold a berth
         div_rivals = [r for r in DIVISION_RIVALS.get(div, []) if r != abbr]
         best_rival_wins = max(
             (self.standings.get(r, {}).get("wins", 0) for r in div_rivals),
@@ -409,14 +539,14 @@ class ScenarioBuilder:
         label  = f"{abbr} eliminated from {conf} playoff contention"
 
         return Scenario(
-            iri             = sc_iri,
-            label           = label,
-            beneficiary     = abbr,
-            scenario_type   = "eliminated_wildcard",
-            required_wins   = eliminators,
-            required_losses = [],
-            remaining_games = 0,
-            is_active       = not already_eliminated,
+            iri=sc_iri,
+            label=label,
+            beneficiary=abbr,
+            scenario_type="eliminated_wildcard",
+            required_wins=eliminators,
+            required_losses=[],
+            remaining_games=0,
+            is_active=not already_eliminated,
         )
 
     def _already_wildcard_eliminated(self, abbr: str, sd: dict) -> bool:
@@ -471,7 +601,6 @@ class ScenarioBuilder:
         except ImportError:
             return self._team_wins_tiebreaker_over(abbr, rival_abbr, div)
 
-        # Seed with completed games
         projected: list = [
             TBGame.from_dict(g) for g in self.games if g.get("status") == "post"
         ]
@@ -492,7 +621,7 @@ class ScenarioBuilder:
             away = game["away"]["abbr"]
 
             if {home, away} == {abbr, rival_abbr}:
-                winner, loser = rival_abbr, abbr        # rival wins H2H
+                winner, loser = rival_abbr, abbr
             elif abbr in (home, away):
                 winner = abbr
                 loser  = away if home == abbr else home
@@ -500,12 +629,12 @@ class ScenarioBuilder:
                 winner = rival_abbr
                 loser  = away if home == rival_abbr else home
             else:
-                winner, loser = home, away              # home wins other games
+                winner, loser = home, away
 
             extra_wins[winner]  = extra_wins.get(winner, 0) + 1
             extra_losses[loser] = extra_losses.get(loser, 0) + 1
 
-            hs = 21 if winner == home else 17
+            hs  = 21 if winner == home else 17
             as_ = 21 if winner == away else 17
             projected.append(TBGame(
                 id=f"sim_{key}",
@@ -524,7 +653,7 @@ class ScenarioBuilder:
                 name=sd.get("name", a),
                 division=DIVISION_MAP.get(a, ""),
                 conference=CONFERENCE_MAP.get(a, ""),
-                wins=sd["wins"]    + extra_wins.get(a, 0),
+                wins=sd["wins"]     + extra_wins.get(a, 0),
                 losses=sd["losses"] + extra_losses.get(a, 0),
                 ties=sd.get("ties", 0),
             )
@@ -554,24 +683,21 @@ class ScenarioBuilder:
         g.add((sc_iri, NFL.name,             Literal(sc.label)))
         g.add((sc_iri, PLAYOFF.beneficiary,  ben_iri))
         g.add((sc_iri, NFL["scenarioType"],  Literal(sc.scenario_type)))
-        g.add((sc_iri, NFL["isActive"],      Literal(sc.is_active,       datatype=XSD.boolean)))
-        g.add((sc_iri, NFL["remainingGames"], Literal(sc.remaining_games, datatype=XSD.integer)))
+        g.add((sc_iri, NFL["isActive"],      Literal(sc.is_active,        datatype=XSD.boolean)))
+        g.add((sc_iri, NFL["remainingGames"], Literal(sc.remaining_games,  datatype=XSD.integer)))
 
-        # Required wins → team must win a remaining game
         for win_abbr in sc.required_wins:
             req_iri = URIRef(f"{sc.iri}:req:win:{win_abbr}")
-            g.add((sc_iri,   PLAYOFF.requires,       req_iri))
-            g.add((req_iri,  NFL["requiresWinFrom"], _team_iri(win_abbr)))
-            g.add((req_iri,  NFL["outcomeType"],     Literal("win")))
+            g.add((sc_iri,  PLAYOFF.requires,       req_iri))
+            g.add((req_iri, NFL["requiresWinFrom"], _team_iri(win_abbr)))
+            g.add((req_iri, NFL["outcomeType"],     Literal("win")))
 
-        # Required losses → opponent must lose
         for loss_abbr in sc.required_losses:
             req_iri = URIRef(f"{sc.iri}:req:loss:{loss_abbr}")
-            g.add((sc_iri,   PLAYOFF.requires,        req_iri))
-            g.add((req_iri,  NFL["requiresLossFrom"], _team_iri(loss_abbr)))
-            g.add((req_iri,  NFL["outcomeType"],      Literal("loss")))
+            g.add((sc_iri,  PLAYOFF.requires,        req_iri))
+            g.add((req_iri, NFL["requiresLossFrom"], _team_iri(loss_abbr)))
+            g.add((req_iri, NFL["outcomeType"],      Literal("loss")))
 
-        # Link future scenario from team node
         g.add((ben_iri, NFL.futureScenario, sc_iri))
 
     # ── Index helpers ─────────────────────────────────────────────────────────
@@ -612,10 +738,7 @@ class ScenarioBuilder:
         return idx
 
     def _latest_outcome_iri(self, team_abbr: str, win: bool) -> URIRef | None:
-        """
-        Find the IRI of an upcoming game outcome node for a team.
-        Returns None if no remaining game found.
-        """
+        """Find the IRI of an upcoming game outcome node for a team."""
         remaining = self._remaining.get(team_abbr, [])
         if not remaining:
             return None
@@ -625,3 +748,36 @@ class ScenarioBuilder:
             else game["home"]["abbr"]
         )
         return _outcome_iri(game, winner_abbr)
+
+
+# ── Display helper ─────────────────────────────────────────────────────────────
+
+def _print_clinch_path(sc: Scenario, team_remaining: int) -> None:
+    """Print the most likely path description for a clinch scenario."""
+    # Team wins line
+    if sc.wins_needed > 0:
+        if sc.key_wins_vs and sc.wins_needed <= len(sc.key_wins_vs):
+            # All needed wins can come from specific head-to-head matchups
+            vs_str = " or ".join(sc.key_wins_vs[: sc.wins_needed])
+            suffix = f"vs {vs_str}"
+            print(f"           Win {sc.wins_needed} game{'s' if sc.wins_needed != 1 else ''} ({suffix})")
+        elif sc.key_wins_vs:
+            vs_str = ", ".join(sc.key_wins_vs)
+            print(
+                f"           Win {sc.wins_needed} of {team_remaining} remaining games"
+                f" (any opponent; key matchups: {vs_str})"
+            )
+        else:
+            print(
+                f"           Win {sc.wins_needed} of {team_remaining} remaining games"
+                f" (any opponent)"
+            )
+
+    # Rival loss lines
+    for rival, losses in sc.rival_losses_needed.items():
+        rival_rem      = sc.rival_games_remaining.get(rival, losses)
+        wins_allowed   = rival_rem - losses
+        print(
+            f"           Need {rival} to go {wins_allowed}-{losses}+ or worse"
+            f" ({rival_rem} games remaining)"
+        )

@@ -1,30 +1,5 @@
 /* Scenarios — clinch + elimination paths for the user's team. */
 
-// Annotate each scenario's `requires` rows with a "when" label so users see
-// which week each win/loss needs to land. Scenarios are matched by id; if a
-// requirement isn't covered, it falls back to "Any remaining week".
-function annotateWeeks(scenarios) {
-  const W = (window.WEEK_META && window.WEEK_META.week) || 14;
-  const map = {
-    "clinch-div-quick": [`Week ${W}`, `Week ${W}`],
-    "clinch-div-slow":  [`Week ${W}`, `Week ${W + 1}`],
-    "catch-up":         [`Week ${W}`, "Any remaining week", "Any remaining week"],
-    "wc-clinch":        [`Week ${W}`, "Any remaining week", "Any remaining week"],
-    "elim-watch":       [`Week ${W}`, `Week ${W + 1}`, "Any remaining week"],
-    "bye-chase":        ["Weeks remaining (all)", "Any remaining week"],
-  };
-  return scenarios.map((s) => {
-    const labels = map[s.id];
-    return {
-      ...s,
-      requires: s.requires.map((r, i) => ({
-        ...r,
-        week: r.week || (labels && labels[i]) || "Any remaining week",
-      })),
-    };
-  });
-}
-
 function LikelihoodRing({ value, size = 56 }) {
   const stroke = 5;
   const r = (size - stroke) / 2;
@@ -71,17 +46,20 @@ function ReqRow({ r, i }) {
 }
 
 function ScenarioCard({ s, idx }) {
-  const tone = s.kind === "elimination" ? "danger"
-             : s.kind === "watch"       ? "neutral"
+  const tone = s.kind === "elimination" || s.kind === "eliminated" ? "danger"
+             : s.kind === "watch"                                   ? "neutral"
              : "good";
-  const urgencyLabel = { high: "High urgency", med: "Medium", low: "Low" }[s.urgency] || "—";
+  const urgencyLabel = s.isClinched  ? (s.kind === "eliminated" ? "Eliminated" : "Clinched ✓")
+                     : { high: "High urgency", med: "Medium", low: "Low" }[s.urgency] || "—";
   return (
     <article className={"scn-card tone-" + tone} style={{ "--enter-delay": `${idx * 80}ms` }}>
       <header className="scn-head">
         <div>
           <div className={"scn-kind tag-" + tone}>
-            {s.kind === "elimination" ? "Elimination path"
-              : s.kind === "watch"   ? "Race to watch"
+            {s.kind === "eliminated"  ? "Eliminated"
+              : s.kind === "clinched" ? "Clinched"
+              : s.kind === "elimination" ? "Elimination path"
+              : s.kind === "watch"       ? "Race to watch"
               : "Clinch path"}
           </div>
           <h3 className="scn-title">{s.title}</h3>
@@ -104,11 +82,11 @@ function ScenarioCard({ s, idx }) {
 }
 
 function Scenarios({ fav }) {
-  const scenarios = annotateWeeks(window.computeScenarios(fav));
+  const scenarios = window.computeScenarios(fav);
   const favTeam = window.TEAMS[fav];
-  const clinch = scenarios.filter(s => s.kind === "clinch");
+  const clinch = scenarios.filter(s => s.kind === "clinch" || s.kind === "clinched");
   const watch  = scenarios.filter(s => s.kind === "watch");
-  const elim   = scenarios.filter(s => s.kind === "elimination");
+  const elim   = scenarios.filter(s => s.kind === "elimination" || s.kind === "eliminated");
 
   return (
     <>
@@ -118,7 +96,7 @@ function Scenarios({ fav }) {
           <h1>Playoff scenarios</h1>
           <div className="sub">
             Every path that gets the <strong>{favTeam.name}</strong> in — and every one that knocks them out.
-            Each requirement is tagged with the week it needs to land.
+            Requirements show win counts and rival record thresholds, not specific weeks.
           </div>
         </div>
       </div>
