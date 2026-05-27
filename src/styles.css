@@ -187,6 +187,21 @@ input  { font-family: inherit; }
   color: var(--text);
   box-shadow: var(--shadow-sm);
 }
+/* Graph View link tab — opens the Vite graph app */
+a.topnav .tab-graph, .topnav a.tab-graph {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-ink);
+  font-weight: 600;
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+  padding: 5px 12px;
+}
+.topnav a.tab-graph:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
 .topnav .right { justify-self: end; display: flex; align-items: center; gap: 10px; }
 
 .team-chip {

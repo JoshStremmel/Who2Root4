@@ -1,0 +1,12 @@
+{
+  "name": "who2root4",
+  "private": true,
+  "scripts": {
+    "dev:graph": "pnpm --filter graph dev",
+    "build:graph": "pnpm --filter graph build",
+    "server": "uvicorn api.server:app --reload --port 8000"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -1,0 +1,7 @@
+packages:
+  - "graph"
+  - "g3-toolkit/packages/*"
+
+# Allow esbuild's native binary postinstall (required by Vite)
+allowBuilds:
+  esbuild: true
