@@ -76,7 +76,7 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       "text-max-width": "65px",
     },
   },
-  // Conference colors
+  // Conference colors (fallback — overridden by teamColor below)
   {
     selector: 'node[conference = "AFC"]',
     style: { "background-color": "#2563eb" },
@@ -84,6 +84,11 @@ const PLAYOFF_GRAPH_STYLESHEET = [
   {
     selector: 'node[conference = "NFC"]',
     style: { "background-color": "#7c3aed" },
+  },
+  // Team brand color (same palette as the main page)
+  {
+    selector: "node[teamColor]",
+    style: { "background-color": "data(teamColor)" },
   },
   // Favorite team: gold border
   {

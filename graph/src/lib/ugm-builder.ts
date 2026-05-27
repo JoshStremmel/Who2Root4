@@ -311,6 +311,7 @@ export function buildGraphData(
         losses:             n.losses,
         playoffSeed:        n.playoffSeed,
         playoffProbability: n.playoffProbability,
+        teamColor:          `#${n.color}`,
         standingKind:       n.standingKind,
         nodeLabel:          n.nodeLabel,
         isFavorite:         n.isFavorite,
