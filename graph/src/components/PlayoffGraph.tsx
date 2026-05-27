@@ -3,56 +3,103 @@
  *
  * Layout:
  *   ┌─────────────────────────────────────────────────────┐
- *   │  [FacetFilter]                       [CanvasLegend] │  ← controls bar
+ *   │  [GraphFilter]              [Recenter] [CanvasLegend]│  ← controls bar
  *   ├──────────────────────────────┬──────────────────────┤
  *   │                              │                      │
- *   │   CytoscapeCanvas            │  DetailInspector     │
- *   │   (main graph)               │  (selected node)     │
+ *   │   CytoscapeCanvas            │  TeamPanel /         │
+ *   │   (conference layout)        │  EdgeDetail          │
  *   │                              │                      │
  *   ├──────────────────────────────┴──────────────────────┤
- *   │   LinkedChart (edge-type breakdown bar chart)       │
+ *   │   ImpactChart (one bar per game this week)          │
  *   └─────────────────────────────────────────────────────┘
- *
- * All visualization components come from @g3t/react and @g3t/charts.
- * Selection state is shared via @g3t/react/state's Zustand store.
  */
 
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import type { Core } from "cytoscape";
 import type { UGM } from "@g3t/core";
-import { createEdgeTypeBreakdown } from "@g3t/core/pipeline";
-import { CytoscapeCanvas, DetailInspector } from "@g3t/react/views";
-import {
-  FacetFilter,
-  CanvasLegend,
-  ContextMenuManager,
-} from "@g3t/react/controls";
+import { CytoscapeCanvas } from "@g3t/react/views";
+import { CanvasLegend, ContextMenuManager } from "@g3t/react/controls";
 import { useSelectionStore } from "@g3t/react/state";
-import { LinkedChart } from "@g3t/charts";
-import type { GraphData } from "../types";
+import type { GraphData, GraphNode, GraphEdge } from "../types";
 
-// ── Visual Encoding Configuration ────────────────────────────────────────────
+// ── Team positions (AFC left, NFC right, divisions in 2×2 clusters) ──────────
 //
-// Properties are flattened into Cytoscape data by ugmToCytoscapeElements, so
-// all UGM node/edge properties are accessible via data(propName) in selectors.
+// Coordinate space ~1000×900.  cy.fit() will zoom-to-fit after applying.
 //
-// node[teamColor]        → team brand hex (#rrggbb)
-// node[playoffProbability] → 0–1 float
-// node[abbreviation]     → "CIN", "BAL", …
-// edge[type]             → "improvesOdds" | "hurtsOdds" | "neutral"  (UGM edge type)
-// edge[impactScore]      → 0–1 float
+// AFC (left): East(x=120) + North(x=280) top; South(x=120) + West(x=280) bottom
+// NFC (right): East(x=720) + North(x=880) top; South(x=720) + West(x=880) bottom
+
+const TEAM_POSITIONS: Record<string, { x: number; y: number }> = {
+  // AFC East
+  BUF: { x: 120, y: 100 }, MIA: { x: 120, y: 210 }, NE:  { x: 120, y: 320 }, NYJ: { x: 120, y: 430 },
+  // AFC North
+  BAL: { x: 280, y: 100 }, CIN: { x: 280, y: 210 }, CLE: { x: 280, y: 320 }, PIT: { x: 280, y: 430 },
+  // AFC South
+  HOU: { x: 120, y: 570 }, IND: { x: 120, y: 680 }, JAX: { x: 120, y: 790 }, TEN: { x: 120, y: 900 },
+  // AFC West
+  DEN: { x: 280, y: 570 }, KC:  { x: 280, y: 680 }, LAC: { x: 280, y: 790 }, LV:  { x: 280, y: 900 },
+  // NFC East
+  DAL: { x: 720, y: 100 }, NYG: { x: 720, y: 210 }, PHI: { x: 720, y: 320 }, WAS: { x: 720, y: 430 },
+  // NFC North
+  CHI: { x: 880, y: 100 }, DET: { x: 880, y: 210 }, GB:  { x: 880, y: 320 }, MIN: { x: 880, y: 430 },
+  // NFC South
+  ATL: { x: 720, y: 570 }, CAR: { x: 720, y: 680 }, NO:  { x: 720, y: 790 }, TB:  { x: 720, y: 900 },
+  // NFC West
+  ARI: { x: 880, y: 570 }, LAR: { x: 880, y: 680 }, SEA: { x: 880, y: 790 }, SF:  { x: 880, y: 900 },
+};
+
+function applyTeamPositions(cy: Core) {
+  cy.nodes().forEach(node => {
+    const abbr = node.data("abbreviation") as string;
+    const pos = TEAM_POSITIONS[abbr];
+    if (pos) node.position(pos);
+  });
+  cy.fit(cy.elements(), 40);
+}
+
+// ── Stylesheet ────────────────────────────────────────────────────────────────
+//
+// No team brand colors (copyright).  Nodes colored by conference.
+// Edge labels suppressed — colored arrows + legend explain them.
 
 const PLAYOFF_GRAPH_STYLESHEET = [
-  // ── Node encoding ──────────────────────────────────────────────────────────
-  // Team brand color overrides the default type-palette color
+  // Base node: white text, bold, wrap for two-line seed label
   {
-    selector: "node[teamColor]",
+    selector: "node",
     style: {
-      "background-color": "data(teamColor)",
+      color:           "#ffffff",
+      "font-size":     "8px",
+      "font-weight":   "bold",
+      "text-valign":   "center",
+      "text-halign":   "center",
+      "text-wrap":     "wrap",
+      "text-max-width": "65px",
     },
   },
-  // Size ← playoff probability (30–70 px). Scoped with [prop] to avoid
-  // cytoscape's "Do not assign mappings to elements without data" warning.
+  // Conference colors
+  {
+    selector: 'node[conference = "AFC"]',
+    style: { "background-color": "#2563eb" },
+  },
+  {
+    selector: 'node[conference = "NFC"]',
+    style: { "background-color": "#7c3aed" },
+  },
+  // Favorite team: gold border
+  {
+    selector: "node[?isFavorite]",
+    style: {
+      "border-width": 3,
+      "border-color": "#f59e0b",
+      "border-style": "solid",
+    },
+  },
+  // Node label = abbreviation + optional seed (e.g. "CIN\n#3")
+  {
+    selector: "node[nodeLabel]",
+    style: { label: "data(nodeLabel)" },
+  },
+  // Size ← playoff probability (30–70 px)
   {
     selector: "node[playoffProbability]",
     style: {
@@ -60,55 +107,39 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       height: "mapData(playoffProbability, 0, 1, 30, 70)" as unknown as number,
     },
   },
-  // Abbreviation label
+  // Suppress all edge labels — use colored arrows only
   {
-    selector: "node[abbreviation]",
-    style: {
-      label: "data(abbreviation)",
-    },
+    selector: "edge",
+    style: { label: "" },
   },
-
-  // ── Edge encoding ──────────────────────────────────────────────────────────
-  // Green = improves fav's odds, red = hurts odds, gray = neutral.
-  // `type` is the UGM edge type — ugmToCytoscapeElements maps it to data(type).
+  // Edge colors
   {
     selector: 'edge[type = "improvesOdds"]',
-    style: {
-      "line-color":          "#22c55e",
-      "target-arrow-color":  "#22c55e",
-    },
+    style: { "line-color": "#22c55e", "target-arrow-color": "#22c55e" },
   },
   {
     selector: 'edge[type = "hurtsOdds"]',
-    style: {
-      "line-color":          "#ef4444",
-      "target-arrow-color":  "#ef4444",
-    },
+    style: { "line-color": "#ef4444", "target-arrow-color": "#ef4444" },
   },
   {
     selector: 'edge[type = "neutral"]',
-    style: {
-      "line-color":          "#9ca3af",
-      "target-arrow-color":  "#9ca3af",
-    },
+    style: { "line-color": "#9ca3af", "target-arrow-color": "#9ca3af" },
   },
-  // Width ← impact score (1–8 px)
+  // Width ← impact score
   {
     selector: "edge[impactScore]",
-    style: {
-      width: "mapData(impactScore, 0, 1, 1, 8)" as unknown as number,
-    },
+    style: { width: "mapData(impactScore, 0, 1, 1, 8)" as unknown as number },
   },
 ] as const;
 
-// Encoding config fed to CanvasLegend
+// Encoding config for CanvasLegend
 const LEGEND_ENCODING = {
-  nodeSizeProperty: "playoffProbability" as const,
-  nodeSizeRange:    [30, 70] as [number, number],
-  nodeColorProperty: "teamColor" as const,
+  nodeSizeProperty:  "playoffProbability" as const,
+  nodeSizeRange:     [30, 70] as [number, number],
+  nodeColorProperty: "conference" as const,
   edgeWidthProperty: "impactScore" as const,
-  edgeWidthRange:   [1, 8] as [number, number],
-  nodeLabelProperty: "abbreviation",
+  edgeWidthRange:    [1, 8] as [number, number],
+  nodeLabelProperty: "nodeLabel",
   edgeLabelProperty: "type",
 };
 
@@ -125,91 +156,104 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   const { selectedNodeIds, selectedEdgeIds, selectNodes, selectEdges } =
     useSelectionStore();
 
-  // Which node types to hide (driven by FacetFilter)
-  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
+  // ── Filter state ─────────────────────────────────────────────────────────
+  const [visibleConfs, setVisibleConfs] = useState(new Set(["AFC", "NFC"]));
+  const [visibleKinds, setVisibleKinds] = useState(
+    new Set(["division_leader", "wildcard", "in_hunt", "eliminated"]),
+  );
+  const [only1Seed, setOnly1Seed] = useState(false);
 
-  // Selected element for DetailInspector
-  const selectedElement = useMemo((): { type: "node" | "edge"; id: string } | null => {
-    const firstNode = [...selectedNodeIds][0];
-    if (firstNode) return { type: "node", id: firstNode };
-    const firstEdge = [...selectedEdgeIds][0];
-    if (firstEdge) return { type: "edge", id: firstEdge };
-    return null;
-  }, [selectedNodeIds, selectedEdgeIds]);
+  function toggleConf(c: string) {
+    setVisibleConfs(prev => {
+      const next = new Set(prev);
+      next.has(c) ? next.delete(c) : next.add(c);
+      return next;
+    });
+  }
+  function toggleKind(k: string) {
+    setVisibleKinds(prev => {
+      const next = new Set(prev);
+      next.has(k) ? next.delete(k) : next.add(k);
+      return next;
+    });
+  }
 
-  // ContextMenuManager wired to selection store
+  // ── Context menu (friendly labels) ───────────────────────────────────────
   const menuManagerRef = useRef<ContextMenuManager | null>(null);
   if (!menuManagerRef.current) {
     const mgr = new ContextMenuManager();
-    // "Inspect" selects the node/edge so DetailInspector picks it up
-    mgr.register("who2root4-inspect", [
+    mgr.register("who2root4", [
       {
-        id: "inspect",
-        label: "Inspect node",
-        icon: "🔍",
+        id: "view-team",
+        label: "View playoff picture",
+        icon: "🏈",
         filter: (t) => t.type === "node",
         action: (t) => { if (t.id) selectNodes([t.id]); },
       },
       {
-        id: "inspect-edge",
-        label: "Inspect edge",
-        icon: "🔍",
+        id: "view-game",
+        label: "View game details",
+        icon: "📊",
         filter: (t) => t.type === "edge",
         action: (t) => { if (t.id) selectEdges([t.id]); },
-      },
-      {
-        id: "focus-team",
-        label: "Focus on this team's games",
-        icon: "🎯",
-        filter: (t) => t.type === "node",
-        action: (t) => { if (t.id) selectNodes([t.id]); },
       },
     ]);
     menuManagerRef.current = mgr;
   }
 
-  // cyRef for applying hidden-type visibility and canvas click-to-deselect
+  // ── Canvas ref + tap wiring ───────────────────────────────────────────────
   const cyRef = useRef<Core | null>(null);
 
   const handleCanvasReady = useCallback(
     (cy: Core) => {
       cyRef.current = cy;
-      // Tap background → clear selection
+      // Apply deterministic division layout after initial layout completes
+      cy.one("layoutstop", () => applyTeamPositions(cy));
+      // Also apply immediately for preset layout (fires synchronously if no layout runs)
+      setTimeout(() => applyTeamPositions(cy), 0);
+
       cy.on("tap", (evt) => {
-        if (evt.target === cy) {
-          selectNodes([]);
-          selectEdges([]);
-        }
+        if (evt.target === cy) { selectNodes([]); selectEdges([]); }
       });
-      // Tap node → select
-      cy.on("tap", "node", (evt) => {
-        selectNodes([evt.target.id()]);
-      });
-      // Tap edge → select
-      cy.on("tap", "edge", (evt) => {
-        selectEdges([evt.target.id()]);
-      });
+      cy.on("tap", "node", (evt) => selectNodes([evt.target.id()]));
+      cy.on("tap", "edge", (evt) => selectEdges([evt.target.id()]));
     },
     [selectNodes, selectEdges],
   );
 
-  // Apply hidden-type visibility whenever hiddenTypes changes
+  // Reapply positions when UGM updates (new nodes may lack positions)
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    cy.nodes().forEach((node) => {
-      const nodeType = (node.data("_type") as string | undefined) ??
-        (node.data("types") as string[] | undefined)?.[0] ?? "";
-      if (hiddenTypes.has(nodeType)) {
-        node.style("display", "none");
-      } else {
-        node.style("display", "element");
-      }
-    });
-  }, [hiddenTypes]);
+    setTimeout(() => applyTeamPositions(cy), 50);
+  }, [ugm]);
 
-  // DataPipeline for LinkedChart: breakdown by edge type
-  const chartPipeline = useMemo(() => createEdgeTypeBreakdown(), []);
+  // Apply filter visibility changes
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.elements().removeStyle("display");
+    const toHide = cy.nodes().filter(node => {
+      const conf = node.data("conference") as string;
+      const kind = node.data("standingKind") as string;
+      if (!visibleConfs.has(conf)) return true;
+      if (!visibleKinds.has(kind)) return true;
+      if (only1Seed && !node.data("is1SeedContender")) return true;
+      return false;
+    });
+    toHide.style("display", "none");
+    toHide.connectedEdges().style("display", "none");
+  }, [visibleConfs, visibleKinds, only1Seed]);
+
+  // Selected element
+  const firstNode = [...selectedNodeIds][0] ?? null;
+  const firstEdge = [...selectedEdgeIds][0] ?? null;
+  const selectedNodeData = firstNode
+    ? graphData.nodes.find(n => n.id === firstNode) ?? null
+    : null;
+  const selectedEdgeData = firstEdge
+    ? graphData.edges.find(e => e.id === firstEdge) ?? null
+    : null;
 
   // Responsive layout
   const [showChart, setShowChart] = useState(true);
@@ -226,28 +270,33 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     <div style={styles.root}>
       {/* Controls bar */}
       <div style={styles.controls}>
-        <FacetFilter
-          ugm={ugm}
-          onFilterChange={setHiddenTypes}
-          className="pg-facet"
+        <GraphFilter
+          visibleConfs={visibleConfs}
+          visibleKinds={visibleKinds}
+          only1Seed={only1Seed}
+          onToggleConf={toggleConf}
+          onToggleKind={toggleKind}
+          onToggle1Seed={() => setOnly1Seed(v => !v)}
         />
-        <div style={{ marginLeft: "auto", flexShrink: 0 }}>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <button
+            style={styles.recentreBtn}
+            onClick={() => cyRef.current && applyTeamPositions(cyRef.current)}
+            title="Refit graph on screen"
+          >
+            ⊙ Recenter
+          </button>
           <CanvasLegend ugm={ugm} encoding={LEGEND_ENCODING} />
         </div>
       </div>
 
       {/* Main two-column area */}
-      <div
-        style={{
-          ...styles.canvasArea,
-          flexDirection: narrow ? "column" : "row",
-        }}
-      >
+      <div style={{ ...styles.canvasArea, flexDirection: narrow ? "column" : "row" }}>
         {/* Canvas */}
         <div style={styles.canvasWrapper}>
           <CytoscapeCanvas
             ugm={ugm}
-            layout="fcose"
+            layout="preset"
             stylesheet={
               PLAYOFF_GRAPH_STYLESHEET as unknown as Parameters<
                 typeof CytoscapeCanvas
@@ -260,82 +309,160 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
         </div>
 
         {/* Inspector panel */}
-        <div
-          style={{
-            ...styles.inspector,
-            width: narrow ? "100%" : 300,
-            maxHeight: narrow ? 320 : undefined,
-          }}
-        >
+        <div style={{ ...styles.inspector, width: narrow ? "100%" : 300, maxHeight: narrow ? 320 : undefined }}>
           <div style={styles.inspectorHeader}>
-            {selectedElement
-              ? selectedElement.type === "node"
-                ? "Team Details"
-                : "Edge Details"
-              : "Click a node to inspect"}
+            {selectedNodeData
+              ? "Team Details"
+              : selectedEdgeData
+                ? "Game Details"
+                : "Click any team to see their playoff picture"}
           </div>
-          <DetailInspector ugm={ugm} selection={selectedElement} />
-          {selectedElement?.type === "node" && (
-            <TeamPanel
-              ugm={ugm}
-              nodeId={selectedElement.id}
-              graphData={graphData}
-            />
+          {selectedNodeData && (
+            <TeamPanel node={selectedNodeData} graphData={graphData} />
+          )}
+          {selectedEdgeData && !selectedNodeData && (
+            <EdgeDetail edge={selectedEdgeData} />
           )}
         </div>
       </div>
 
-      {/* Bottom chart (hidden behind toggle on narrow screens) */}
+      {/* Bottom chart */}
       {narrow && (
-        <button
-          style={styles.chartToggle}
-          onClick={() => setShowChart((v) => !v)}
-        >
+        <button style={styles.chartToggle} onClick={() => setShowChart(v => !v)}>
           {showChart ? "▲ Hide" : "▼ Show"} Impact Chart
         </button>
       )}
       {(!narrow || showChart) && (
         <div style={styles.chartWrapper}>
-          <LinkedChart
-            ugm={ugm}
-            pipeline={chartPipeline}
-            type="bar"
-            height={200}
-          />
+          <ImpactChart graphData={graphData} />
         </div>
       )}
     </div>
   );
 }
 
-// ── TeamPanel ────────────────────────────────────────────────────────────────
-// Rich team-specific detail shown in the inspector when a node is selected.
+// ── GraphFilter ───────────────────────────────────────────────────────────────
+
+interface GraphFilterProps {
+  visibleConfs: Set<string>;
+  visibleKinds: Set<string>;
+  only1Seed: boolean;
+  onToggleConf: (c: string) => void;
+  onToggleKind: (k: string) => void;
+  onToggle1Seed: () => void;
+}
+
+const KIND_LABELS: { key: string; label: string }[] = [
+  { key: "division_leader", label: "Div Leaders" },
+  { key: "wildcard",        label: "Wild Card"   },
+  { key: "in_hunt",         label: "In Hunt"     },
+  { key: "eliminated",      label: "Out"         },
+];
+
+function GraphFilter({
+  visibleConfs, visibleKinds, only1Seed,
+  onToggleConf, onToggleKind, onToggle1Seed,
+}: GraphFilterProps) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <span style={chipStyles.label}>CONF:</span>
+      {(["AFC", "NFC"] as const).map(c => (
+        <FilterChip
+          key={c}
+          active={visibleConfs.has(c)}
+          onClick={() => onToggleConf(c)}
+          color={c === "AFC" ? "#2563eb" : "#7c3aed"}
+        >
+          {c}
+        </FilterChip>
+      ))}
+      <span style={{ ...chipStyles.divider }} />
+      <span style={chipStyles.label}>STATUS:</span>
+      {KIND_LABELS.map(({ key, label }) => (
+        <FilterChip key={key} active={visibleKinds.has(key)} onClick={() => onToggleKind(key)}>
+          {label}
+        </FilterChip>
+      ))}
+      <span style={{ ...chipStyles.divider }} />
+      <FilterChip active={only1Seed} onClick={onToggle1Seed} color="#f59e0b">
+        1-Seed Hunt
+      </FilterChip>
+    </div>
+  );
+}
+
+function FilterChip({
+  children, active, onClick, color = "#6b7280",
+}: {
+  children: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+  color?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding:      "2px 8px",
+        borderRadius: 12,
+        border:       `1.5px solid ${active ? color : "var(--border)"}`,
+        background:   active ? color : "transparent",
+        color:        active ? "#fff" : "var(--text-muted)",
+        fontSize:     11,
+        fontWeight:   600,
+        cursor:       "pointer",
+        fontFamily:   "var(--font-data)",
+        transition:   "all 0.15s",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+const chipStyles = {
+  label: {
+    fontSize:   11,
+    fontWeight: 700,
+    color:      "var(--text-faint)",
+    letterSpacing: "0.05em",
+  } as const,
+  divider: {
+    width:      1,
+    height:     14,
+    background: "var(--border)",
+    display:    "inline-block",
+    margin:     "0 2px",
+  } as const,
+};
+
+// ── TeamPanel ─────────────────────────────────────────────────────────────────
 
 interface TeamPanelProps {
-  ugm: UGM;
-  nodeId: string;
+  node: GraphNode;
   graphData: GraphData;
 }
 
-function TeamPanel({ nodeId, graphData }: TeamPanelProps) {
-  const node = graphData.nodes.find((n) => n.id === nodeId);
-  if (!node) return null;
-
+function TeamPanel({ node, graphData }: TeamPanelProps) {
   const relatedEdges = graphData.edges.filter(
-    (e) => e.source === nodeId || e.target === nodeId,
+    e => e.source === node.id || e.target === node.id,
   );
+  const confColor = node.conference === "AFC" ? "#2563eb" : "#7c3aed";
+  const seedBadgeColor = node.isFavorite ? "#f59e0b" : confColor;
 
   return (
     <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)", fontSize: 13 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <img
-          src={node.logoUrl}
-          alt={node.abbreviation}
-          width={32}
-          height={32}
-          style={{ objectFit: "contain", flexShrink: 0 }}
-          onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
-        />
+        <div
+          style={{
+            width: 36, height: 36, borderRadius: "50%",
+            background: confColor, color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontWeight: 800, fontSize: 12, flexShrink: 0,
+          }}
+        >
+          {node.abbreviation}
+        </div>
         <div>
           <div style={{ fontWeight: 700, fontSize: 15 }}>{node.label}</div>
           <div style={{ color: "var(--text-muted)" }}>
@@ -343,69 +470,45 @@ function TeamPanel({ nodeId, graphData }: TeamPanelProps) {
           </div>
         </div>
         {node.playoffSeed != null && (
-          <div
-            style={{
-              marginLeft: "auto",
-              background: `#${node.color}`,
-              color: "#fff",
-              borderRadius: 4,
-              padding: "2px 6px",
-              fontWeight: 700,
-              fontSize: 12,
-              flexShrink: 0,
-            }}
-          >
+          <div style={{
+            marginLeft: "auto", background: seedBadgeColor,
+            color: "#fff", borderRadius: 4, padding: "2px 6px",
+            fontWeight: 700, fontSize: 12, flexShrink: 0,
+          }}>
             #{node.playoffSeed}
           </div>
         )}
       </div>
 
-      <div style={{ marginBottom: 6 }}>
+      <div style={{ marginBottom: 4 }}>
         <span style={{ color: "var(--text-muted)" }}>Playoff probability: </span>
         <strong>{Math.round(node.playoffProbability * 100)}%</strong>
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <span style={{ color: "var(--text-muted)" }}>Status: </span>
+        <strong style={{ textTransform: "capitalize" }}>
+          {node.standingKind.replace("_", " ")}
+        </strong>
       </div>
 
       {relatedEdges.length > 0 && (
         <>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            This week ({relatedEdges.length} impacts):
+            This week ({relatedEdges.length} game impacts):
           </div>
-          {relatedEdges.slice(0, 6).map((e) => {
-            const isSource = e.source === nodeId;
+          {relatedEdges.slice(0, 6).map(e => {
+            const isSource = e.source === node.id;
             const otherAbbr = (isSource ? e.target : e.source).split(":").pop() ?? "";
             const dotColor =
-              e.type === "improvesOdds"
-                ? "#22c55e"
-                : e.type === "hurtsOdds"
-                  ? "#ef4444"
-                  : "#9ca3af";
+              e.type === "improvesOdds" ? "#22c55e"
+              : e.type === "hurtsOdds"  ? "#ef4444"
+              : "#9ca3af";
             return (
-              <div
-                key={e.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "3px 0",
-                  borderBottom: "1px solid var(--border)",
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: dotColor,
-                    flexShrink: 0,
-                  }}
-                />
-                <span style={{ flex: 1 }}>
-                  {isSource ? "→" : "←"} {otherAbbr}
-                </span>
+              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
+                <span style={{ flex: 1 }}>{isSource ? "Root for" : "Against"} {otherAbbr}</span>
                 {e.recommendationScore > 0 && (
-                  <span style={{ fontWeight: 700, color: dotColor, fontSize: 12 }}>
-                    {e.recommendationScore}
-                  </span>
+                  <span style={{ fontWeight: 700, color: dotColor, fontSize: 12 }}>{e.recommendationScore}</span>
                 )}
               </div>
             );
@@ -416,14 +519,7 @@ function TeamPanel({ nodeId, graphData }: TeamPanelProps) {
             </div>
           )}
           {relatedEdges[0]?.reasoning && (
-            <div
-              style={{
-                marginTop: 6,
-                color: "var(--text-muted)",
-                fontStyle: "italic",
-                fontSize: 11,
-              }}
-            >
+            <div style={{ marginTop: 6, color: "var(--text-muted)", fontStyle: "italic", fontSize: 11 }}>
               {relatedEdges[0].reasoning}
             </div>
           )}
@@ -433,64 +529,167 @@ function TeamPanel({ nodeId, graphData }: TeamPanelProps) {
   );
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
+// ── EdgeDetail ────────────────────────────────────────────────────────────────
+
+function EdgeDetail({ edge }: { edge: GraphEdge }) {
+  const rootFor = edge.source.split(":").pop() ?? "";
+  const against = edge.target.split(":").pop() ?? "";
+  const dotColor =
+    edge.type === "improvesOdds" ? "#22c55e"
+    : edge.type === "hurtsOdds"  ? "#ef4444"
+    : "#9ca3af";
+  return (
+    <div style={{ padding: "8px 12px", fontSize: 13 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>
+        <span style={{ color: dotColor }}>{rootFor}</span> vs {against}
+      </div>
+      <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>
+        Impact score: <strong>{edge.recommendationScore}</strong>
+      </div>
+      <div style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: 11 }}>
+        {edge.reasoning || "No reasoning available"}
+      </div>
+    </div>
+  );
+}
+
+// ── ImpactChart ───────────────────────────────────────────────────────────────
+// SVG bar chart: one bar per game, sorted by recommendationScore descending.
+
+function ImpactChart({ graphData }: { graphData: GraphData }) {
+  const CHART_H   = 110;
+  const LABEL_H   = 52;
+  const BAR_W     = 38;
+  const GAP       = 6;
+  const SCORE_PAD = 14;
+
+  const edges = [...graphData.edges]
+    .filter(e => e.recommendationScore > 0)
+    .sort((a, b) => b.recommendationScore - a.recommendationScore)
+    .slice(0, 14);
+
+  if (edges.length === 0) {
+    return (
+      <div style={{ padding: "12px 16px", color: "var(--text-faint)", fontSize: 12 }}>
+        This Week's Game Impact Scores — no games with impact data
+      </div>
+    );
+  }
+
+  const maxScore = Math.max(...edges.map(e => e.recommendationScore), 1);
+  const svgW = edges.length * (BAR_W + GAP) + GAP;
+  const svgH = CHART_H + LABEL_H + SCORE_PAD;
+
+  return (
+    <div style={{ padding: "6px 12px 4px", overflowX: "auto" }}>
+      <div style={{ fontWeight: 700, fontSize: 11, marginBottom: 4, color: "var(--text-muted)", letterSpacing: "0.04em" }}>
+        THIS WEEK'S GAME IMPACT SCORES
+      </div>
+      <svg width={svgW} height={svgH} style={{ display: "block" }}>
+        {edges.map((e, i) => {
+          const rootFor = e.source.split(":").pop() ?? "";
+          const against = e.target.split(":").pop() ?? "";
+          const barH = Math.max(4, (e.recommendationScore / maxScore) * CHART_H);
+          const x    = GAP + i * (BAR_W + GAP);
+          const y    = CHART_H - barH;
+          const color =
+            e.type === "improvesOdds" ? "#22c55e"
+            : e.type === "hurtsOdds"  ? "#ef4444"
+            : "#9ca3af";
+          const lx   = x + BAR_W / 2;
+          const ly   = CHART_H + 10;
+          return (
+            <g key={e.id}>
+              <rect x={x} y={y} width={BAR_W} height={barH} fill={color} rx={3} />
+              <text x={lx} y={CHART_H - barH - 3} textAnchor="middle" fontSize={8} fill="var(--text)">
+                {e.recommendationScore}
+              </text>
+              {/* X-axis label: "ROOT vs OPP", rotated 40° */}
+              <text
+                x={lx} y={ly} textAnchor="end"
+                fontSize={8} fill="var(--text-muted)"
+                transform={`rotate(-40, ${lx}, ${ly})`}
+              >
+                {rootFor} vs {against}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = {
   root: {
-    display:        "flex",
-    flexDirection:  "column" as const,
-    height:         "calc(100vh - 56px)",
-    overflow:       "hidden",
-    background:     "var(--bg)",
+    display:       "flex",
+    flexDirection: "column" as const,
+    height:        "calc(100vh - 56px)",
+    overflow:      "hidden",
+    background:    "var(--bg)",
   },
   controls: {
-    display:        "flex",
-    alignItems:     "center",
-    gap:            12,
-    padding:        "6px 12px",
-    borderBottom:   "1px solid var(--border)",
-    background:     "var(--surface)",
-    flexWrap:       "wrap" as const,
-    flexShrink:     0,
+    display:      "flex",
+    alignItems:   "center",
+    gap:          8,
+    padding:      "6px 12px",
+    borderBottom: "1px solid var(--border)",
+    background:   "var(--surface)",
+    flexWrap:     "wrap" as const,
+    flexShrink:   0,
   },
   canvasArea: {
-    display:        "flex",
-    flex:           1,
-    overflow:       "hidden",
+    display:  "flex",
+    flex:     1,
+    overflow: "hidden",
   },
   canvasWrapper: {
-    flex:           1,
-    position:       "relative" as const,
-    overflow:       "hidden",
+    flex:     1,
+    position: "relative" as const,
+    overflow: "hidden",
   },
   inspector: {
-    borderLeft:     "1px solid var(--border)",
-    background:     "var(--surface)",
-    overflowY:      "auto" as const,
-    display:        "flex",
-    flexDirection:  "column" as const,
+    borderLeft:    "1px solid var(--border)",
+    background:    "var(--surface)",
+    overflowY:     "auto" as const,
+    display:       "flex",
+    flexDirection: "column" as const,
   },
   inspectorHeader: {
-    padding:        "8px 12px",
-    fontWeight:     700,
-    fontSize:       13,
-    borderBottom:   "1px solid var(--border)",
-    background:     "var(--bg-soft, var(--surface))",
-    flexShrink:     0,
+    padding:      "8px 12px",
+    fontWeight:   600,
+    fontSize:     12,
+    borderBottom: "1px solid var(--border)",
+    background:   "var(--bg-soft, var(--surface))",
+    color:        "var(--text-muted)",
+    flexShrink:   0,
   },
   chartWrapper: {
-    borderTop:      "1px solid var(--border)",
-    background:     "var(--surface)",
-    flexShrink:     0,
+    borderTop:  "1px solid var(--border)",
+    background: "var(--surface)",
+    flexShrink: 0,
   },
   chartToggle: {
-    width:          "100%",
-    padding:        6,
-    border:         "none",
-    borderTop:      "1px solid var(--border)",
-    background:     "var(--surface)",
-    cursor:         "pointer",
-    fontSize:       13,
-    color:          "var(--text-muted)",
+    width:      "100%",
+    padding:    6,
+    border:     "none",
+    borderTop:  "1px solid var(--border)",
+    background: "var(--surface)",
+    cursor:     "pointer",
+    fontSize:   13,
+    color:      "var(--text-muted)",
+  },
+  recentreBtn: {
+    padding:      "4px 10px",
+    borderRadius: 6,
+    border:       "1px solid var(--border)",
+    background:   "var(--surface)",
+    color:        "var(--text-muted)",
+    fontSize:     12,
+    fontWeight:   600,
+    cursor:       "pointer",
+    fontFamily:   "var(--font-data)",
   },
 } as const;

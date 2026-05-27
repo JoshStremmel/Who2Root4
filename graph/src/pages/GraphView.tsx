@@ -13,10 +13,11 @@
  * same ESPN cache files that power the main site's data.js.
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { PlayoffGraph } from "../components/PlayoffGraph";
 import type { GraphData } from "../types";
 import type { UGM } from "@g3t/core";
+import { useThemeStore } from "@g3t/react/theme";
 import type { AggregatedData } from "../lib/nfl-data";
 import { loadSeasonData, buildLoadedData } from "../lib/nfl-data";
 import { buildGraphData } from "../lib/ugm-builder";
@@ -85,6 +86,33 @@ export function GraphView() {
 
   const [seasonLoad, setSeasonLoad] = useState<SeasonLoad>({ status: "idle" });
   const [aggData, setAggData] = useState<AggregatedData | null>(null);
+
+  // ── Dark mode ─────────────────────────────────────────────────────────────
+  const { setTheme } = useThemeStore();
+  const [isDark, setIsDark] = useState(false);
+
+  // Apply stored theme on mount
+  useEffect(() => {
+    try {
+      const prefs = JSON.parse(localStorage.getItem("w2r4_tweaks") ?? "{}");
+      const dark = (prefs.theme ?? "light") === "dark";
+      setIsDark(dark);
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      setTheme(dark ? "dark" : "light");
+    } catch { /* ignore */ }
+  }, [setTheme]);
+
+  const toggleTheme = useCallback(() => {
+    const next = !isDark;
+    setIsDark(next);
+    const theme = next ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", theme);
+    setTheme(theme);
+    try {
+      const prefs = JSON.parse(localStorage.getItem("w2r4_tweaks") ?? "{}");
+      localStorage.setItem("w2r4_tweaks", JSON.stringify({ ...prefs, theme }));
+    } catch { /* ignore */ }
+  }, [isDark, setTheme]);
 
   // Fetch season data once on mount
   useEffect(() => {
@@ -158,6 +186,15 @@ export function GraphView() {
         <span style={{ color: "var(--text-faint)", fontSize: 12 }}>
           {season} season
         </span>
+
+        {/* Dark mode toggle */}
+        <button
+          onClick={toggleTheme}
+          title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          style={pageStyles.themeBtn}
+        >
+          {isDark ? "☀️" : "🌙"}
+        </button>
       </header>
 
       {/* Preseason banner */}
@@ -302,6 +339,16 @@ const pageStyles = {
     color:        "var(--text)",
     fontSize:     13,
     fontFamily:   "var(--font-data)",
+  },
+  themeBtn: {
+    padding:      "4px 8px",
+    borderRadius: 6,
+    border:       "1px solid var(--border)",
+    background:   "var(--surface)",
+    cursor:       "pointer",
+    fontSize:     16,
+    lineHeight:   1,
+    marginLeft:   "auto",
   },
   preseasonBanner: {
     background:   "oklch(0.96 0.045 60)",

@@ -8,14 +8,10 @@
 
 import { UGM } from "@g3t/core";
 import type { GraphData, GraphNode, GraphEdge } from "../types";
-import type { LoadedData, TeamData, ScheduleGame } from "./nfl-data";
+import type { LoadedData, TeamData } from "./nfl-data";
 import { winPct } from "./nfl-data";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-
-const STRENGTH_WEIGHT = { high: 0.35, medium: 0.20, low: 0.10 };
-const ESPN_LOGO = (abbr: string) =>
-  `https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/${abbr.toLowerCase()}.png`;
 
 // ── Standings helpers ─────────────────────────────────────────────────────────
 
@@ -33,10 +29,6 @@ function weeksRemaining(loaded: LoadedData): number {
 
 function inDivisionContention(team: TeamData, teams: Record<string, TeamData>, loaded: LoadedData): boolean {
   return gamesBack(team, teams) <= weeksRemaining(loaded);
-}
-
-function maxWins(team: TeamData, loaded: LoadedData): number {
-  return team.record[0] + weeksRemaining(loaded);
 }
 
 // ── Standings ─────────────────────────────────────────────────────────────────
@@ -82,90 +74,6 @@ function computeStandings(teams: Record<string, TeamData>): Record<string, Stand
     }
   }
   return byTeam;
-}
-
-// ── Scenario detectors ────────────────────────────────────────────────────────
-
-interface ScenarioRow {
-  root_for: string;
-  against: string;
-  category: string;
-  strength: "high" | "medium" | "low";
-  strength_weight: number;
-  why: string;
-}
-
-function scenarioRows(
-  home: string, away: string,
-  fav: TeamData, dislikes: string[], mode: string,
-  futureFavOpponents: Set<string>,
-  teams: Record<string, TeamData>,
-): ScenarioRow[] {
-  const out: ScenarioRow[] = [];
-  const homeT = teams[home], awayT = teams[away];
-  if (!homeT || !awayT) return out;
-
-  for (const team of [home, away]) {
-    const t = teams[team];
-    if (!t) continue;
-    if (t.div === fav.div && t.conf === fav.conf && team !== fav.abbr) {
-      const opp = team === home ? away : home;
-      out.push({ root_for: opp, against: team, category: "DivisionRivalTank", strength: "high", strength_weight: STRENGTH_WEIGHT.high, why: `${team} is a division rival` });
-    }
-  }
-
-  for (const team of [home, away]) {
-    if (!futureFavOpponents.has(team)) continue;
-    const opp = team === home ? away : home;
-    const t = teams[team];
-    if (!t) continue;
-    const [w, l] = t.record;
-    if (w !== l) {
-      out.push({ root_for: opp, against: team, category: "OpponentTanking", strength: "medium", strength_weight: STRENGTH_WEIGHT.medium, why: `${team} (${w}-${l}) is an upcoming opponent` });
-    }
-  }
-
-  if (mode !== "division") {
-    for (const team of [home, away]) {
-      const t = teams[team];
-      if (!t || team === fav.abbr || t.conf !== fav.conf) continue;
-      if (t.record[0] > t.record[1]) {
-        const opp = team === home ? away : home;
-        out.push({ root_for: opp, against: team, category: "PlayoffSoftening", strength: "high", strength_weight: STRENGTH_WEIGHT.high, why: `${team} is a ${fav.conf} playoff contender` });
-      }
-    }
-  }
-
-  if (mode !== "division" && homeT.conf === fav.conf && home !== fav.abbr) {
-    const gap = homeT.record[0] - awayT.record[0];
-    if (gap >= 4) {
-      out.push({ root_for: away, against: home, category: "UpsetRooting", strength: "medium", strength_weight: STRENGTH_WEIGHT.medium, why: `${home} is a heavy home favorite (${gap}-win gap)` });
-    }
-  }
-
-  if (mode === "overall" || mode === "wildcard") {
-    for (const team of [home, away]) {
-      if (team === fav.abbr) continue;
-      const t = teams[team];
-      if (!t) continue;
-      const isDivRival  = t.div === fav.div && t.conf === fav.conf;
-      const isConfThreat = t.conf === fav.conf;
-      if (!(isDivRival || isConfThreat)) continue;
-      const w = t.record[0];
-      if (w >= 6 && w <= 9) {
-        const opp = team === home ? away : home;
-        out.push({ root_for: opp, against: team, category: "DraftPositioning", strength: "low", strength_weight: STRENGTH_WEIGHT.low, why: `${team} (${w}W) stuck in no-man's-land` });
-      }
-    }
-  }
-
-  for (const team of [home, away]) {
-    if (dislikes.includes(team)) {
-      const opp = team === home ? away : home;
-      out.push({ root_for: opp, against: team, category: "Dislikes", strength: "medium", strength_weight: STRENGTH_WEIGHT.medium, why: `you dislike ${team}` });
-    }
-  }
-  return out;
 }
 
 // ── Mode score ────────────────────────────────────────────────────────────────
@@ -238,125 +146,6 @@ function buildReasoning(
     return [`${againstAbbr} is a conference competitor — their loss improves ${target}`];
   }
   return ["no direct playoff impact"];
-}
-
-// ── Tank scorer ───────────────────────────────────────────────────────────────
-
-function scoreGameTank(home: string, away: string, fav: TeamData, teams: Record<string, TeamData>) {
-  if (home === fav.abbr || away === fav.abbr) return null;
-  const favWins = fav.record[0];
-  const hW = teams[home]?.record[0] ?? 0, aW = teams[away]?.record[0] ?? 0;
-  const [rootAbbr, againstAbbr, rootWins] = hW <= aW ? [home, away, hW] : [away, home, aW];
-  const minGap = Math.min(Math.abs(hW - favWins), Math.abs(aW - favWins));
-  let base = minGap === 0 ? 0.5 : minGap === 1 ? 0.35 : minGap === 2 ? 0.20 : minGap === 3 ? 0.10 : 0.05;
-  const rT = teams[rootAbbr];
-  if (rT?.div === fav.div && rT?.conf === fav.conf) base = Math.min(base + 0.15, 1.0);
-  const strength: "high"|"medium"|"low" = base >= 0.35 ? "high" : base >= 0.20 ? "medium" : "low";
-  const why = rootWins < favWins
-    ? `${rootAbbr} (${rootWins}W) is below you — their win protects your draft slot`
-    : `${rootAbbr} (${rootWins}W) is tied/ahead — their win separates them from your draft range`;
-  return { rootFor: rootAbbr, against: againstAbbr, score: base, strength, strength_weight: STRENGTH_WEIGHT[strength], category: "TankPositioning", reasonsAll: [why] };
-}
-
-// ── Underdog resolver ─────────────────────────────────────────────────────────
-
-function resolveUnderdog(g: ScheduleGame): string | null {
-  if (g.spread != null) {
-    if (g.spread < 0) return g.away;
-    if (g.spread > 0) return g.home;
-  }
-  if (g.homeFavorite != null) return g.homeFavorite ? g.away : g.home;
-  return null;
-}
-
-// ── computeRecommendations ────────────────────────────────────────────────────
-
-interface Recommendation {
-  gameId: string;
-  rootFor: string;
-  against: string;
-  score: number;
-  category: string;
-  strength: string;
-  reasoning: string;
-}
-
-function computeRecommendations(
-  favAbbr: string, dislikes: string[], mode: string, loaded: LoadedData,
-): Recommendation[] {
-  const fav = loaded.teams[favAbbr];
-  if (!fav) return [];
-  const teams = loaded.teams;
-  const dl = dislikes.map(d => d.toUpperCase());
-  const futureFavOpponents = new Set(
-    loaded.schedule
-      .filter(g => g.home === favAbbr || g.away === favAbbr)
-      .map(g => g.home === favAbbr ? g.away : g.home),
-  );
-
-  const recs: Recommendation[] = [];
-
-  for (const g of loaded.schedule) {
-    if (g.home === favAbbr || g.away === favAbbr) continue;
-    if (g.completed) continue;
-
-    if (mode === "tank") {
-      const r = scoreGameTank(g.home, g.away, fav, teams);
-      if (r) recs.push({ gameId: g.id, rootFor: r.rootFor, against: r.against, score: r.score, category: r.category, strength: r.strength, reasoning: r.reasonsAll[0] });
-      continue;
-    }
-
-    let playoffRoot = g.home, playoffAgainst = g.away, playoffScore = 0;
-    const homeT = teams[g.home], awayT = teams[g.away];
-    if (homeT?.conf === fav.conf || awayT?.conf === fav.conf) {
-      const h = modeScore(g.home, g.away, fav, mode, dl, teams, loaded);
-      const a = modeScore(g.away, g.home, fav, mode, dl, teams, loaded);
-      const ud = resolveUnderdog(g);
-      const udBonus = 0.02;
-      const adjH = h + (g.home === ud ? udBonus : 0);
-      const adjA = a + (g.away === ud ? udBonus : 0);
-      if (adjH >= adjA) { playoffRoot = g.home; playoffAgainst = g.away; playoffScore = h; }
-      else              { playoffRoot = g.away; playoffAgainst = g.home; playoffScore = a; }
-    }
-
-    const scenarios = scenarioRows(g.home, g.away, fav, dl, mode, futureFavOpponents, teams);
-    const homeWeight = scenarios.filter(s => s.root_for === g.home).reduce((a,b) => a+b.strength_weight, 0);
-    const awayWeight = scenarios.filter(s => s.root_for === g.away).reduce((a,b) => a+b.strength_weight, 0);
-
-    let rootAbbr: string, againstAbbr: string, category: string, score: number, reasonsAll: string[];
-
-    if (homeWeight > 0 || awayWeight > 0) {
-      rootAbbr = homeWeight >= awayWeight ? g.home : g.away;
-      againstAbbr = rootAbbr === g.home ? g.away : g.home;
-      const matching = scenarios.filter(s => s.root_for === rootAbbr).sort((a,b) => b.strength_weight - a.strength_weight);
-      const primary = matching[0];
-      category = primary.category;
-      score = rootAbbr === playoffRoot ? playoffScore : 0;
-      reasonsAll = [primary.why];
-      if (matching.length > 1 && matching[1].strength_weight >= 0.20 && matching[1].category !== primary.category) {
-        reasonsAll.push(matching[1].why);
-      }
-      if (playoffScore > 0 && rootAbbr === playoffRoot && primary.strength_weight < 0.35) {
-        reasonsAll.push(...buildReasoning(rootAbbr, againstAbbr, fav, mode, playoffScore, teams, loaded));
-      }
-    } else {
-      rootAbbr = playoffRoot; againstAbbr = playoffAgainst;
-      score = playoffScore;
-      category = score > 0 ? "direct_playoff_impact" : "no_impact";
-      reasonsAll = buildReasoning(rootAbbr, againstAbbr, fav, mode, score, teams, loaded);
-    }
-
-    if (score > 0) {
-      const hStr = loaded.teamStrengths[g.home]?.strengthScore ?? 0.5;
-      const aStr = loaded.teamStrengths[g.away]?.strengthScore ?? 0.5;
-      score = Math.min(score + 0.05 * (hStr + aStr) / 2, 1.0);
-    }
-
-    recs.push({ gameId: g.id, rootFor: rootAbbr, against: againstAbbr, score, category, strength: score > 0.25 ? "high" : score > 0.10 ? "medium" : "low", reasoning: reasonsAll[0] ?? "" });
-  }
-
-  recs.sort((a, b) => b.score - a.score);
-  return recs;
 }
 
 // ── Playoff probability heuristic ─────────────────────────────────────────────
@@ -454,6 +243,13 @@ export function buildGraphData(
   mode = "overall",
 ): { ugm: UGM; graphData: GraphData } {
   const standings = computeStandings(loaded.teams);
+  const wr = loaded.weekMeta.weeksRemaining;
+
+  // 1-seed win count per conference (for the "1-seed contender" flag)
+  const oneSeedWins: Partial<Record<string, number>> = {};
+  for (const [abbr, entry] of Object.entries(standings)) {
+    if (entry.seed === 1) oneSeedWins[entry.conf] = loaded.teams[abbr]?.record[0] ?? 0;
+  }
 
   // Collect all teams in current week + fav
   const teamsInWeek = new Set<string>([favAbbr]);
@@ -466,6 +262,20 @@ export function buildGraphData(
     if (!t) continue;
     const standing = standings[abbr];
     const label = t.name ? `${t.city} ${t.name}`.trim() : abbr;
+
+    const standingKind: GraphNode["standingKind"] =
+      !standing            ? "in_hunt"
+      : standing.kind === "division" ? "division_leader"
+      : standing.kind === "wildcard" ? "wildcard"
+      : (standing.gamesBehind ?? 99) <= wr ? "in_hunt"
+      : "eliminated";
+
+    const seed = standing?.seed ?? null;
+    const nodeLabel = seed != null ? `${abbr}\n#${seed}` : abbr;
+    const isFavorite = abbr === favAbbr;
+    const seed1W = oneSeedWins[t.conf] ?? 0;
+    const is1SeedContender = t.record[0] + wr >= seed1W;
+
     nodes.push({
       id: `urn:nfl:team:${abbr}`,
       label,
@@ -474,17 +284,20 @@ export function buildGraphData(
       conference: t.conf,
       wins: t.record[0],
       losses: t.record[1],
-      playoffSeed: standing?.seed ?? null,
+      playoffSeed: seed,
       playoffProbability: playoffProbability(abbr, standing, loaded.teams),
       color: t.color.replace(/^#/, ""),
-      logoUrl: t.logo ?? ESPN_LOGO(abbr),
+      standingKind,
+      nodeLabel,
+      isFavorite,
+      is1SeedContender,
     });
   }
 
   // Build edges for all same-conference games (completed or upcoming)
   const edges = computePlayoffEdges(loaded, favAbbr, dislikes, mode);
 
-  // Build UGM instance
+  // Build UGM instance — no team colors or logos (copyright); use conference for styling
   const ugm = new UGM();
   for (const n of nodes) {
     ugm.addNode(n.id, {
@@ -498,8 +311,10 @@ export function buildGraphData(
         losses:             n.losses,
         playoffSeed:        n.playoffSeed,
         playoffProbability: n.playoffProbability,
-        teamColor:          `#${n.color}`,
-        logoUrl:            n.logoUrl,
+        standingKind:       n.standingKind,
+        nodeLabel:          n.nodeLabel,
+        isFavorite:         n.isFavorite,
+        is1SeedContender:   n.is1SeedContender,
       },
     });
   }
