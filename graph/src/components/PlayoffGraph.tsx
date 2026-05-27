@@ -127,10 +127,10 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       "outline-style":    "solid",
       "outline-offset":   2,
       "shadow-color":     "#ef4444",
-      "shadow-blur":      30,
+      "shadow-blur":      14,
       "shadow-offset-x":  0,
       "shadow-offset-y":  0,
-      "shadow-opacity":   0.8,
+      "shadow-opacity":   0.5,
     },
   },
   {
@@ -143,10 +143,10 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       "outline-style":    "solid",
       "outline-offset":   2,
       "shadow-color":     "#3b82f6",
-      "shadow-blur":      30,
+      "shadow-blur":      14,
       "shadow-offset-x":  0,
       "shadow-offset-y":  0,
-      "shadow-opacity":   0.8,
+      "shadow-opacity":   0.5,
     },
   },
   // Team brand color (same palette as the main page) — overrides conf fallback
@@ -327,6 +327,8 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   // Responsive layout
   const [showChart, setShowChart] = useState(true);
   const [narrow, setNarrow] = useState(false);
+  const [inspectorWidth, setInspectorWidth] = useState(300);
+  const [bottomHeight, setBottomHeight] = useState(190);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 768px)");
     const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
@@ -334,6 +336,34 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
+
+  function startInspectorResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = inspectorWidth;
+    const onMove = (ev: MouseEvent) =>
+      setInspectorWidth(Math.max(160, Math.min(520, startWidth + (startX - ev.clientX))));
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  function startBottomResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = bottomHeight;
+    const onMove = (ev: MouseEvent) =>
+      setBottomHeight(Math.max(60, Math.min(420, startHeight + (startY - ev.clientY))));
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   return (
     <div style={styles.root}>
@@ -347,16 +377,13 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
           onToggleKind={toggleKind}
           onToggle1Seed={() => setOnly1Seed(v => !v)}
         />
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <button
-            style={styles.recentreBtn}
-            onClick={() => cyRef.current && applyTeamPositions(cyRef.current)}
-            title="Refit graph on screen"
-          >
-            ⊙ Recenter
-          </button>
-          <CanvasLegend ugm={ugm} encoding={LEGEND_ENCODING} />
-        </div>
+        <button
+          style={{ ...styles.recentreBtn, marginLeft: "auto", flexShrink: 0 }}
+          onClick={() => cyRef.current && applyTeamPositions(cyRef.current)}
+          title="Refit graph on screen"
+        >
+          ⊙ Recenter
+        </button>
       </div>
 
       {/* Main two-column area */}
@@ -377,8 +404,13 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
           />
         </div>
 
+        {/* Inspector resize handle */}
+        {!narrow && (
+          <div style={styles.inspectorResizeHandle} onMouseDown={startInspectorResize} />
+        )}
+
         {/* Inspector panel */}
-        <div style={{ ...styles.inspector, width: narrow ? "100%" : 300, maxHeight: narrow ? 320 : undefined }}>
+        <div style={{ ...styles.inspector, width: narrow ? "100%" : inspectorWidth, maxHeight: narrow ? 320 : undefined }}>
           <div style={styles.inspectorHeader}>
             {selectedNodeData
               ? "Team Details"
@@ -402,8 +434,18 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
         </button>
       )}
       {(!narrow || showChart) && (
-        <div style={styles.chartWrapper}>
-          <ImpactChart graphData={graphData} />
+        <div style={{ ...styles.chartWrapper, height: narrow ? undefined : bottomHeight }}>
+          {!narrow && (
+            <div style={styles.bottomResizeHandle} onMouseDown={startBottomResize} />
+          )}
+          <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+            <div style={styles.legendPanel}>
+              <CanvasLegend ugm={ugm} encoding={LEGEND_ENCODING} />
+            </div>
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              <ImpactChart graphData={graphData} />
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -703,7 +745,7 @@ const styles = {
     display:      "flex",
     alignItems:   "center",
     gap:          8,
-    padding:      "6px 12px",
+    padding:      "3px 10px",
     borderBottom: "1px solid var(--border)",
     background:   "var(--surface)",
     flexWrap:     "wrap" as const,
@@ -736,9 +778,32 @@ const styles = {
     flexShrink:   0,
   },
   chartWrapper: {
-    borderTop:  "1px solid var(--border)",
-    background: "var(--surface)",
+    borderTop:     "1px solid var(--border)",
+    background:    "var(--surface)",
+    flexShrink:    0,
+    display:       "flex",
+    flexDirection: "column" as const,
+    overflow:      "hidden",
+  },
+  inspectorResizeHandle: {
+    width:      5,
+    cursor:     "col-resize",
+    background: "var(--border)",
     flexShrink: 0,
+    userSelect: "none" as const,
+  },
+  bottomResizeHandle: {
+    height:     5,
+    cursor:     "row-resize",
+    background: "var(--border)",
+    flexShrink: 0,
+    userSelect: "none" as const,
+  },
+  legendPanel: {
+    flexShrink:  0,
+    borderRight: "1px solid var(--border)",
+    overflowY:   "auto" as const,
+    padding:     "4px 8px",
   },
   chartToggle: {
     width:      "100%",
