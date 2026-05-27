@@ -57,35 +57,69 @@ function applyTeamPositions(cy: Core) {
   cy.fit(cy.elements(), 40);
 }
 
+// Apply seed number as an inline SVG background image inside each node.
+// Cytoscape only supports one label per node, so we use background-image
+// for the seed text (inside) while the label positions the abbreviation below.
+function applyNodeSeedImages(cy: Core) {
+  cy.nodes().forEach(node => {
+    const seed = node.data("playoffSeed") as number | null;
+    if (seed != null) {
+      const svgText = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text x='50' y='58' text-anchor='middle' dominant-baseline='middle' fill='rgba(255,255,255,0.92)' font-size='36' font-weight='900' font-family='system-ui,-apple-system,Arial,sans-serif'>#${seed}</text></svg>`;
+      node.style("background-image", "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgText));
+      node.style("background-fit", "cover");
+    } else {
+      node.style("background-image", "none");
+    }
+  });
+}
+
 // ── Stylesheet ────────────────────────────────────────────────────────────────
 //
-// No team brand colors (copyright).  Nodes colored by conference.
+// Seed text is rendered via SVG background-image (see applyNodeSeedImages).
+// Abbreviation appears below the node via text-valign: bottom.
 // Edge labels suppressed — colored arrows + legend explain them.
 
 const PLAYOFF_GRAPH_STYLESHEET = [
-  // Base node: white text, bold, wrap for two-line seed label
+  // Base node: abbreviation BELOW the node; white text with dark outline
+  // so it's readable on any background (light or dark canvas).
   {
     selector: "node",
     style: {
-      color:           "#ffffff",
-      "font-size":     "8px",
-      "font-weight":   "bold",
-      "text-valign":   "center",
-      "text-halign":   "center",
-      "text-wrap":     "wrap",
-      "text-max-width": "65px",
+      color:                 "#ffffff",
+      "font-size":           "10px",
+      "font-weight":         "bold",
+      "text-valign":         "bottom",
+      "text-halign":         "center",
+      "text-margin-y":       8,
+      "text-outline-color":  "#1f2937",
+      "text-outline-width":  1.5,
+      "text-outline-opacity": 0.75,
     },
   },
-  // Conference colors (fallback — overridden by teamColor below)
+  // Conference fallback colors + glow shadows
   {
     selector: 'node[conference = "AFC"]',
-    style: { "background-color": "#2563eb" },
+    style: {
+      "background-color":  "#b91c1c",
+      "shadow-blur":       18,
+      "shadow-color":      "#ef4444",
+      "shadow-offset-x":   0,
+      "shadow-offset-y":   0,
+      "shadow-opacity":    0.65,
+    },
   },
   {
     selector: 'node[conference = "NFC"]',
-    style: { "background-color": "#7c3aed" },
+    style: {
+      "background-color":  "#1d4ed8",
+      "shadow-blur":       18,
+      "shadow-color":      "#3b82f6",
+      "shadow-offset-x":   0,
+      "shadow-offset-y":   0,
+      "shadow-opacity":    0.65,
+    },
   },
-  // Team brand color (same palette as the main page)
+  // Team brand color (same palette as the main page) — overrides conf fallback
   {
     selector: "node[teamColor]",
     style: { "background-color": "data(teamColor)" },
@@ -99,10 +133,10 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       "border-style": "solid",
     },
   },
-  // Node label = abbreviation + optional seed (e.g. "CIN\n#3")
+  // Abbreviation label below the node
   {
-    selector: "node[nodeLabel]",
-    style: { label: "data(nodeLabel)" },
+    selector: "node[abbreviation]",
+    style: { label: "data(abbreviation)" },
   },
   // Size ← playoff probability (30–70 px)
   {
@@ -212,10 +246,10 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   const handleCanvasReady = useCallback(
     (cy: Core) => {
       cyRef.current = cy;
-      // Apply deterministic division layout after initial layout completes
-      cy.one("layoutstop", () => applyTeamPositions(cy));
-      // Also apply immediately for preset layout (fires synchronously if no layout runs)
-      setTimeout(() => applyTeamPositions(cy), 0);
+      // Apply deterministic division layout + seed images after initial layout
+      cy.one("layoutstop", () => { applyTeamPositions(cy); applyNodeSeedImages(cy); });
+      // Also apply immediately for preset layout
+      setTimeout(() => { applyTeamPositions(cy); applyNodeSeedImages(cy); }, 0);
 
       cy.on("tap", (evt) => {
         if (evt.target === cy) { selectNodes([]); selectEdges([]); }
@@ -226,11 +260,11 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     [selectNodes, selectEdges],
   );
 
-  // Reapply positions when UGM updates (new nodes may lack positions)
+  // Reapply positions + seed images when UGM updates (new nodes may lack positions)
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    setTimeout(() => applyTeamPositions(cy), 50);
+    setTimeout(() => { applyTeamPositions(cy); applyNodeSeedImages(cy); }, 50);
   }, [ugm]);
 
   // Apply filter visibility changes
@@ -376,7 +410,7 @@ function GraphFilter({
           key={c}
           active={visibleConfs.has(c)}
           onClick={() => onToggleConf(c)}
-          color={c === "AFC" ? "#2563eb" : "#7c3aed"}
+          color={c === "AFC" ? "#dc2626" : "#2563eb"}
         >
           {c}
         </FilterChip>
@@ -452,7 +486,7 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
   const relatedEdges = graphData.edges.filter(
     e => e.source === node.id || e.target === node.id,
   );
-  const confColor = node.conference === "AFC" ? "#2563eb" : "#7c3aed";
+  const confColor = node.conference === "AFC" ? "#dc2626" : "#2563eb";
   const seedBadgeColor = node.isFavorite ? "#f59e0b" : confColor;
 
   return (

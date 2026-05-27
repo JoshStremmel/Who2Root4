@@ -271,7 +271,7 @@ export function buildGraphData(
       : "eliminated";
 
     const seed = standing?.seed ?? null;
-    const nodeLabel = seed != null ? `${abbr}\n#${seed}` : abbr;
+    const nodeLabel = abbr; // seed rendered inside circle via SVG background image
     const isFavorite = abbr === favAbbr;
     const seed1W = oneSeedWins[t.conf] ?? 0;
     const is1SeedContender = t.record[0] + wr >= seed1W;
