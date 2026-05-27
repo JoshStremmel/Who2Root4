@@ -31,12 +31,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build @g3t packages
-        run: |
-          pnpm --filter @g3t/core run build
-          pnpm --filter @g3t/react run build
-          pnpm --filter @g3t/charts run build
-
       - name: Build graph
         working-directory: graph
         run: pnpm exec vite build
