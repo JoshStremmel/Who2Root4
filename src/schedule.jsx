@@ -17,6 +17,28 @@ function ScheduleCard({ game, rec, fav, onOpen, delay, mode }) {
         : window.TEAMS[fav].color)
     : null;
 
+  // Compute own-game impact score (1.0 by default, 0 if eliminated/clinched-out)
+  const ownImpact = isOwn && !completed && typeof window.ownGameImpact === "function"
+    ? window.ownGameImpact(fav, mode)
+    : 0;
+
+  // Synthetic rec for own-team game when no rec exists, so clicking opens details
+  const ownSyntheticRec = isOwn && !rec && !completed ? {
+    gameId: `${game.away}-${game.home}-own`,
+    kickoff: game.kickoff,
+    network: game.network,
+    rootFor: tankMode ? (game.home === fav ? game.away : game.home) : fav,
+    against: tankMode ? fav : (game.home === fav ? game.away : game.home),
+    reasoning: `${window.TEAMS[fav].name} ${game.home === fav ? "host" : "visit"} ${window.TEAMS[game.home === fav ? game.away : game.home].name}.`,
+    reasonsAll: [`${window.TEAMS[fav].name} ${game.home === fav ? "host" : "visit"} ${window.TEAMS[game.home === fav ? game.away : game.home].name}.`],
+    score: ownImpact,
+    category: "",
+    strength: ownImpact >= 0.9 ? "high" : ownImpact > 0 ? "medium" : "low",
+    home: game.home,
+    away: game.away,
+  } : null;
+  const effectiveRec = rec || ownSyntheticRec;
+
   const renderTeam = (abbr, side) => {
     const t = window.TEAMS[abbr];
     const isRoot = rootFor === abbr;
@@ -24,28 +46,31 @@ function ScheduleCard({ game, rec, fav, onOpen, delay, mode }) {
     const score = side === "home" ? game.homeScore : game.awayScore;
     const isWinner = completed && winner === side;
     const isLoser = completed && winner && winner !== side && winner !== "tie";
+    // Circle is colored for: root picks, completed winners, fav team (non-tank), tank opponent
+    const isTankOpp = isOwn && tankMode && !isFav;
+    const dotColored = isRoot || isWinner || (isFav && !tankMode) || isTankOpp;
     return (
       <div className={"team-row" + (isRoot && !completed ? " recommended" : "")}>
         <div className="left">
-          <div className={"dot" + (isRoot || completed ? "" : " muted")} style={isRoot || isWinner ? { background: t.color } : null}></div>
+          <div className={"dot" + (dotColored ? "" : " muted")} style={dotColored ? { background: t.color } : null}></div>
           <span className="abbr">{abbr}</span>
           <span className="name">{t.name}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {isRoot && !completed && <span className="rec-tag">Root</span>}
+          {isFav && <span className="rec-tag own-tag">You</span>}
           {completed && score != null ?
           <span className={"score" + (isLoser ? " loser" : "")}>{score}</span> :
 
           <span className="record mono">{t.record[0]}-{t.record[1]}</span>
           }
-          {isRoot && !completed && <span className="rec-tag">Root</span>}
-          {isFav && <span className="rec-tag own-tag">You</span>}
         </div>
       </div>);
 
   };
   return (
     <button className={"sched-card" + (isOwn ? " own" : "") + (isOwn && tankMode ? " tank-mode" : "") + (completed ? " completed" : "")}
-    onClick={() => rec && !completed ? onOpen(rec) : null}
+    onClick={() => effectiveRec && !completed ? onOpen(effectiveRec) : null}
     style={{ "--enter-delay": `${delay || 0}ms`, "--own-color": ownColor || undefined }}>
       <div className="top">
         <span>{game.kickoff}</span>
@@ -62,10 +87,10 @@ function ScheduleCard({ game, rec, fav, onOpen, delay, mode }) {
             {winner === "tie" ? "—" : `${window.TEAMS[winner === "home" ? game.home : game.away].abbr} won`}
           </span>
         </div> :
-      rec ?
+      effectiveRec ?
       <div className="footer">
           <span>Impact</span>
-          <span className="mono" style={{ color: "var(--accent-ink)" }}>{rec.score.toFixed(2)}</span>
+          <span className="mono" style={{ color: "var(--accent-ink)" }}>{effectiveRec.score.toFixed(2)}</span>
         </div> :
       isOwn ?
       <div className="footer">
@@ -116,8 +141,7 @@ function Schedule({ recs, fav, onOpenDetail, mode, setMode }) {
           <div className="eyebrow">{window.WEEK_META.label} · {window.WEEK_META.season}</div>
           <h1>This week's schedule</h1>
           <div className="sub">
-            Every game this week. Highlights show who to root for from a {window.TEAMS[fav].name} perspective
-            {mode === "tank" ? " (tank mode — your own game is shaded in your opponent's colors)." : "."}
+            Every game this week. Highlights show who to root for from a {window.TEAMS[fav].name} perspective.
           </div>
         </div>
       </div>

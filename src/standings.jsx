@@ -12,6 +12,20 @@ function SeedDot({ kind, seed }) {
 }
 
 function DivisionTable({ conf, div, teams, fav, seeds }) {
+  // Determine first-out team in this conference for rank coloring
+  const firstOutAbbr = (() => {
+    const outTeams = Object.entries(seeds.byTeam)
+      .filter(([, s]) => s.kind === "out" && s.conf === conf)
+      .map(([abbr]) => window.TEAMS[abbr])
+      .filter(Boolean)
+      .sort((a, b) => {
+        const aP = a.record[0] / Math.max(1, a.record[0] + a.record[1]);
+        const bP = b.record[0] / Math.max(1, b.record[0] + b.record[1]);
+        return bP - aP || b.record[0] - a.record[0];
+      });
+    return outTeams.length > 0 ? outTeams[0].abbr : null;
+  })();
+
   return (
     <div className="div-table">
       <div className="div-table-head">
@@ -25,10 +39,22 @@ function DivisionTable({ conf, div, teams, fav, seeds }) {
           const inPlayoffs = s && s.seed && s.seed <= 7;
           const strength = window.TEAM_STRENGTHS[t.abbr]?.strengthScore || 0.5;
           const tb = window.TIEBREAKER_REASONS[t.abbr];
+          const isFirstOut = t.abbr === firstOutAbbr;
+
+          let rankClass = "rank mono";
+          let rankStyle = {};
+          if (i === 0) {
+            rankClass += " rank-div-leader";
+          } else if (s?.kind === "wildcard") {
+            rankClass += " rank-wc";
+          } else if (isFirstOut) {
+            rankClass += " rank-first-out";
+          }
+
           return (
             <div className={"div-row" + (isFav ? " is-fav" : "")} key={t.abbr}
                  style={{ "--enter-delay": `${i * 30}ms` }}>
-              <div className="rank mono">{i + 1}</div>
+              <div className={rankClass} style={rankStyle}>{i + 1}</div>
               <div className="swatch" style={{ background: t.color }}></div>
               <div className="name">
                 <span className="city">{t.city}</span>
@@ -51,7 +77,6 @@ function DivisionTable({ conf, div, teams, fav, seeds }) {
                 <span className="mono">{(strength * 100).toFixed(0)}</span>
               </div>
               <div className="seed-cell">
-                {inPlayoffs && <SeedDot kind={s.kind} seed={s.seed} />}
                 {!inPlayoffs && s && s.gamesBehind != null && (
                   <span className="gb mono">{s.gamesBehind} GB</span>
                 )}
@@ -91,7 +116,7 @@ function ConfBracket({ conf, seeds, fav }) {
           return (
             <li key={s.team} className={"bracket-row" + (isFav ? " is-fav" : "")
                                        + (s.kind === "division" ? " div-winner" : "")}>
-              <span className="bracket-seed mono">{s.seed}</span>
+              <span className={"bracket-seed mono" + (s.kind === "wildcard" ? " seed-wc" : "")}>{s.seed}</span>
               <span className="bracket-swatch" style={{ background: t.color }}></span>
               <span className="bracket-name">
                 <span className="city">{t.city}</span> <span className="team-name">{t.name}</span>

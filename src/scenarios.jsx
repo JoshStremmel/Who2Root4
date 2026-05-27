@@ -32,12 +32,14 @@ function ReqRow({ r, i }) {
       <div className="req-team">
         <span className="dot" style={{ background: t.color }}></span>
         <span className="req-team-name">
-          <strong className="mono">{r.team}</strong> {isWin ? "wins" : "loses"}
+          <strong className="mono">{r.team}</strong>
         </span>
       </div>
       <div className="req-rationale">
         <span className="req-rationale-text">{r.rationale}</span>
-        <span className={"req-week" + (isAnyWeek ? " any" : "")} title={isAnyWeek ? "Any remaining week — order doesn't matter" : "Required week"}>
+        <span className={"req-week" + (isAnyWeek ? " any" : "")}
+              style={isAnyWeek ? { fontStyle: "italic" } : undefined}
+              title={isAnyWeek ? "Any remaining week — order doesn't matter" : "Required week"}>
           {r.week}
         </span>
       </div>
@@ -49,8 +51,7 @@ function ScenarioCard({ s, idx }) {
   const tone = s.kind === "elimination" || s.kind === "eliminated" ? "danger"
              : s.kind === "watch"                                   ? "neutral"
              : "good";
-  const urgencyLabel = s.isClinched  ? (s.kind === "eliminated" ? "Eliminated" : "Clinched ✓")
-                     : { high: "High urgency", med: "Medium", low: "Low" }[s.urgency] || "—";
+  const probLabel = s.isClinched ? (s.kind === "eliminated" ? "Eliminated" : "Clinched ✓") : "Probability";
   return (
     <article className={"scn-card tone-" + tone} style={{ "--enter-delay": `${idx * 80}ms` }}>
       <header className="scn-head">
@@ -58,7 +59,7 @@ function ScenarioCard({ s, idx }) {
           <div className={"scn-kind tag-" + tone}>
             {s.kind === "eliminated"  ? "Eliminated"
               : s.kind === "clinched" ? "Clinched"
-              : s.kind === "elimination" ? "Elimination path"
+              : s.kind === "elimination" ? "Elimination watch"
               : s.kind === "watch"       ? "Race to watch"
               : "Clinch path"}
           </div>
@@ -67,7 +68,7 @@ function ScenarioCard({ s, idx }) {
         </div>
         <div className="scn-likelihood">
           <LikelihoodRing value={s.likelihood} />
-          <span className="scn-urgency mono">{urgencyLabel}</span>
+          <span className="scn-urgency mono">{probLabel}</span>
         </div>
       </header>
       <div className="scn-divider">
@@ -84,9 +85,10 @@ function ScenarioCard({ s, idx }) {
 function Scenarios({ fav }) {
   const scenarios = window.computeScenarios(fav);
   const favTeam = window.TEAMS[fav];
-  const clinch = scenarios.filter(s => s.kind === "clinch" || s.kind === "clinched");
-  const watch  = scenarios.filter(s => s.kind === "watch");
-  const elim   = scenarios.filter(s => s.kind === "elimination" || s.kind === "eliminated");
+  const byLikelihood = (a, b) => b.likelihood - a.likelihood;
+  const clinch = scenarios.filter(s => s.kind === "clinch" || s.kind === "clinched").sort(byLikelihood);
+  const watch  = scenarios.filter(s => s.kind === "watch").sort(byLikelihood);
+  const elim   = scenarios.filter(s => s.kind === "elimination" || s.kind === "eliminated").sort(byLikelihood);
 
   return (
     <>

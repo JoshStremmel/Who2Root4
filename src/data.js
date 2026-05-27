@@ -47,7 +47,7 @@ window.MODES = [
 window.CATEGORY_META = {
   DivisionRivalTank:     { label: "Division rival tank",   tone: "fav",   help: "Their loss directly improves your division standing." },
   OpponentTanking:       { label: "Opponent tanking",      tone: "neutral", help: "An upcoming team for you — soften them up first." },
-  PlayoffSoftening:      { label: "Playoff softening",     tone: "neutral", help: "A conference team projecting in — dent their momentum." },
+  PlayoffSoftening:      { label: "Playoff impact",        tone: "fav",     help: "A conference playoff contender — their loss directly tightens the race for you." },
   UpsetRooting:          { label: "Upset rooting",         tone: "warn",  help: "Heavy home favorite in your conference. Trap-game potential." },
   DraftPositioning:      { label: "Draft positioning",     tone: "neutral", help: "Stuck in no-man's-land; keep them losing." },
   Dislikes:              { label: "Personal rivalry",      tone: "warn",  help: "Boosted because you marked them as disliked." },
@@ -701,8 +701,8 @@ function scenarioRows(home, away, fav, dislikes, mode, futureFavOpponents) {
         const opp = team === home ? away : home;
         out.push({
           root_for: opp, against: team,
-          category: "PlayoffSoftening", strength: "medium", strength_weight: STRENGTH_WEIGHT.medium,
-          why: `${team} (${t.record[0]}-${t.record[1]}) is a ${fav.conf} team projecting into playoff seeding — dent their momentum`,
+          category: "PlayoffSoftening", strength: "high", strength_weight: STRENGTH_WEIGHT.high,
+          why: `${team} (${t.record[0]}-${t.record[1]}) is a ${fav.conf} playoff contender — a loss directly tightens the race`,
         });
       }
     }
@@ -983,14 +983,14 @@ window.computeScenarios = function (favAbbr) {
     const rationale = winsNeeded <= h2h.length && h2h.length > 0
       ? `Win ${winsNeeded} game${winsNeeded !== 1 ? 's' : ''} (vs ${h2h.slice(0, winsNeeded).join(" or ")})`
       : `Win ${winsNeeded} of ${favRem} remaining games`;
-    return { type: "win", team: favAbbr, rationale, week: "Any remaining week" };
+    return { type: "win", team: favAbbr, rationale, week: "Any week" };
   }
 
   function makeLossReq(rival, losses, rem) {
     return {
       type: "loss", team: rival.abbr,
-      rationale: `Must go ${rem - losses}-${losses}+ or worse (${rem} games remaining)`,
-      week: "Any remaining week",
+      rationale: `${losses} more loss${losses !== 1 ? "es" : ""} (${rem} remaining)`,
+      week: "Any week",
     };
   }
 
@@ -1058,7 +1058,7 @@ window.computeScenarios = function (favAbbr) {
         const sp     = [];
         if (propMaxWins > 0) sp.push(`${favAbbr} wins ${propMaxWins} more`);
         if (propRivalReqs.length) sp.push(
-          propRivalReqs.map(({ rival, losses, rem }) => `${rival.abbr} goes ${rem - losses}-${losses}+ or worse`).join("; ")
+          propRivalReqs.map(({ rival, losses }) => `${rival.abbr} loses ${losses} more`).join("; ")
         );
         scenarios.push({
           id: "div-clinch-2", kind: "clinch",
@@ -1137,7 +1137,7 @@ window.computeScenarios = function (favAbbr) {
             const sp2 = [];
             if (wcMaxWins > 0) sp2.push(`${favAbbr} wins ${wcMaxWins} more`);
             if (wcRivalReqs.length) sp2.push(
-              wcRivalReqs.map(({ rival, losses, rem }) => `${rival.abbr} goes ${rem - losses}-${losses}+ or worse`).join("; ")
+              wcRivalReqs.map(({ rival, losses }) => `${rival.abbr} loses ${losses} more`).join("; ")
             );
             scenarios.push({
               id: "wc-clinch-2", kind: "clinch",
@@ -1172,16 +1172,45 @@ window.computeScenarios = function (favAbbr) {
 
       // Show watch when close to the 7-team cutoff (4+ ahead) and at least 2 chasers
       if (threats.length >= 2 && definitivelyAhead >= 4) {
+        const elimLossesNeeded = Math.max(1, favWins - threats[0].record[0] + 1);
+        const threatWinsNeeded = (t) => Math.max(1, favWins - t.record[0] + 1);
         scenarios.push({
           id: "elim-watch", kind: "elimination",
           title: `Elimination watch — ${fav.conf} wild card`,
-          summary: `${threats.map(t => t.abbr).join(" and ")} are chasing from behind with ${favRem} games remaining.`,
+          summary: `${favAbbr} loses ${elimLossesNeeded} more while ${threats.map(t => `${t.abbr} wins ${threatWinsNeeded(t)}`).join(" and ")} — playoff spot gone.`,
           requires: [
-            { type: "loss", team: favAbbr, rationale: "Another loss opens the door for chasers", week: "Any remaining week" },
-            { type: "win", team: threats[0].abbr, rationale: `${threats[0].abbr} (${threats[0].record[0]}W) gains ground`, week: "Any remaining week" },
-            ...(threats[1] ? [{ type: "win", team: threats[1].abbr, rationale: `${threats[1].abbr} (${threats[1].record[0]}W) also gains ground`, week: "Any remaining week" }] : []),
+            { type: "loss", team: favAbbr, rationale: `Lose ${elimLossesNeeded} more game${elimLossesNeeded !== 1 ? "s" : ""} (${favRem} remaining)`, week: "Any week" },
+            { type: "win", team: threats[0].abbr, rationale: `Win ${threatWinsNeeded(threats[0])} more to match ${favAbbr}'s wins (${teamRem(threats[0])} remaining)`, week: "Any week" },
+            ...(threats[1] ? [{ type: "win", team: threats[1].abbr, rationale: `Win ${threatWinsNeeded(threats[1])} more to match ${favAbbr}'s wins (${teamRem(threats[1])} remaining)`, week: "Any week" }] : []),
           ],
           likelihood: 0.18, urgency: "low",
+        });
+      }
+    }
+  }
+
+  // ── Division elimination watch ───────────────────────────────────────────
+  if (divRivals.length > 0) {
+    const divEliminated = divRivals.some(r => r.record[0] > maxFavWins);
+    const divClinched   = divRivals.every(r => favWins > r.record[0] + teamRem(r));
+    if (!divEliminated && !divClinched && favRem > 0) {
+      // Find the rival closest to eliminating fav — most wins relative to fav's max
+      const elimThreat = divRivals
+        .filter(r => r.record[0] + teamRem(r) >= maxFavWins)
+        .sort((a, b) => b.record[0] - a.record[0])[0];
+      if (elimThreat) {
+        const threatRem = teamRem(elimThreat);
+        const winsToElim = maxFavWins + 1 - elimThreat.record[0]; // wins elimThreat needs
+        const favLossesToElim = Math.max(1, elimThreat.record[0] - favWins + 1); // fav losses that expose them
+        scenarios.push({
+          id: "div-elim-watch", kind: "elimination",
+          title: `Elimination watch — ${fav.conf} ${fav.div} title`,
+          summary: `${favAbbr} loses ${favLossesToElim} more while ${elimThreat.abbr} wins ${winsToElim} more — division title gone.`,
+          requires: [
+            { type: "loss", team: favAbbr, rationale: `Lose ${favLossesToElim} more game${favLossesToElim !== 1 ? "s" : ""} (${favRem} remaining)`, week: "Any week" },
+            { type: "win", team: elimThreat.abbr, rationale: `Win ${winsToElim} more to exceed ${favAbbr}'s max wins (${threatRem} remaining)`, week: "Any week" },
+          ],
+          likelihood: 0.20, urgency: "med",
         });
       }
     }
@@ -1198,12 +1227,12 @@ window.computeScenarios = function (favAbbr) {
         if (mn.winsNeeded > 0) requires.push({
           type: "win", team: favAbbr,
           rationale: `Win ${mn.winsNeeded} of ${favRem} remaining games`,
-          week: "Any remaining week",
+          week: "Any week",
         });
         if (mn.rivalLosses > 0) requires.push({
           type: "loss", team: confLeader.abbr,
-          rationale: `Must go ${lRem - mn.rivalLosses}-${mn.rivalLosses}+ or worse`,
-          week: "Any remaining week",
+          rationale: `${mn.rivalLosses} more loss${mn.rivalLosses !== 1 ? "es" : ""} (${lRem} remaining)`,
+          week: "Any week",
         });
         scenarios.push({
           id: "bye-chase", kind: "clinch",
@@ -1217,4 +1246,29 @@ window.computeScenarios = function (favAbbr) {
   }
 
   return scenarios;
+};
+
+/* ─── Own-game impact score ─────────────────────────────────────────────── */
+window.ownGameImpact = function (favAbbr, mode) {
+  const fav = window.TEAMS?.[favAbbr];
+  if (!fav) return 1.0;
+  const gamesPlayed = fav.record[0] + fav.record[1] + (fav.record[2] || 0);
+  const rem = Math.max(0, 17 - gamesPlayed);
+  if (rem === 0) return 0;
+  if (mode === "tank") return 1.0;
+  // Eliminated from playoffs → game doesn't move standings
+  const confTeams = Object.values(window.TEAMS).filter(t => t.conf === fav.conf && t.abbr !== favAbbr);
+  const maxFavWins = fav.record[0] + rem;
+  const eliminated = confTeams.filter(t => t.record[0] > maxFavWins).length >= 7;
+  if (eliminated) return 0;
+  // Already clinched #1 seed with no one who can catch up
+  if (mode === "conf_one_seed") {
+    const standings = window.computeStandings();
+    const seed = standings.byTeam[favAbbr] || {};
+    if (seed.seed === 1) {
+      const closest = confTeams.sort((a, b) => b.record[0] - a.record[0])[0];
+      if (!closest || closest.record[0] + (Math.max(0, 17 - (closest.record[0] + closest.record[1] + (closest.record[2] || 0)))) < fav.record[0]) return 0;
+    }
+  }
+  return 1.0;
 };

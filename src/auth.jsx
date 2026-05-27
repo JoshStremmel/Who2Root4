@@ -116,7 +116,7 @@ function Auth({ onAuthed }) {
     <div className="auth-shell">
       <div className="auth-side">
         <div className="auth-brand">
-          <span className="brand-word">Who2Root4</span>
+          <span className="brand-word">Who2Root4<sup className="w2r4-tm">TM</sup></span>
         </div>
         <div className="auth-pitch">
           <div className="onb-eyebrow">FOR FANS OF ANY TEAM</div>

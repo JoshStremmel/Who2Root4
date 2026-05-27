@@ -35,7 +35,7 @@ function TopNav({ tab, setTab, fav, setFav, theme, setTheme, onOpenOnboarding, u
   return (
     <header className="topnav">
       <div className="brand">
-        <span className="brand-word">Who2Root4</span>
+        <span className="brand-word">Who2Root4<sup className="w2r4-tm">TM</sup></span>
         <span style={{ color: "var(--text-faint)", marginLeft: 6, fontFamily: "var(--font-data)", fontWeight: 400, fontSize: 13, letterSpacing: 0, textTransform: "none", opacity: 0.85 }}>· {window.WEEK_META.label}</span>
       </div>
 
@@ -71,7 +71,12 @@ function TopNav({ tab, setTab, fav, setFav, theme, setTheme, onOpenOnboarding, u
               </div>
               {["AFC East", "AFC North", "AFC South", "AFC West", "NFC East", "NFC North", "NFC South", "NFC West"].map((div) => {
               const [conf, divName] = div.split(" ");
-              const abbrs = window.TEAMS_BY_DIVISION[`${conf} ${divName}`] || [];
+              const abbrs = (window.TEAMS_BY_DIVISION[`${conf} ${divName}`] || []).slice().sort((a, b) => {
+                const ta = window.TEAMS[a], tb = window.TEAMS[b];
+                const aP = ta.record[0] / Math.max(1, ta.record[0] + ta.record[1]);
+                const bP = tb.record[0] / Math.max(1, tb.record[0] + tb.record[1]);
+                return bP - aP || tb.record[0] - ta.record[0];
+              });
               return (
                 <React.Fragment key={div}>
                     <h5>{conf} {divName}</h5>
@@ -274,9 +279,9 @@ function App() {
 
       <footer className="w2r4-source-footer">
         Data pulled live from{" "}
-        <a href={window.W2R4_SOURCE?.url || "https://github.com/JoshStremmel/Who2Root4"}
+        <a href="https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
         target="_blank" rel="noreferrer">
-          <code></code>
+          ESPN API
         </a>
         {" · "}{window.WEEK_META.season} season, {window.WEEK_META.label}
         {window.W2R4_SOURCE?.loadedAt &&
@@ -345,7 +350,7 @@ function W2R4Bootstrap() {
       <div className="w2r4-boot">
         <div className="w2r4-boot-card">
           <div className="w2r4-boot-logo">W4</div>
-          <div className="w2r4-boot-title">Who2Root4</div>
+          <div className="w2r4-boot-title">Who2Root4<sup className="w2r4-tm">TM</sup></div>
           <div className="w2r4-boot-sub">Pulling live data from <code>github.com/JoshStremmel/Who2Root4</code>…</div>
           <div className="w2r4-boot-bar"><span /></div>
         </div>

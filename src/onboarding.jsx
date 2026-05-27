@@ -23,7 +23,11 @@ function TeamPickerStep({ step, fav, setFav, dislikes, toggleDislike, onNext, on
     if (isStep1) {
       setFav(abbr);
     } else {
-      if (abbr === fav) return; // cannot dislike your own team
+      if (!fav) return;
+      const favDivision = window.TEAMS[fav]?.div;
+      const favConference = window.TEAMS[fav]?.conf;
+      const inSameDiv = window.TEAMS[abbr]?.div === favDivision && window.TEAMS[abbr]?.conf === favConference;
+      if (abbr === fav || inSameDiv) return; // cannot dislike own team or division
       toggleDislike(abbr);
     }
   };
@@ -31,7 +35,9 @@ function TeamPickerStep({ step, fav, setFav, dislikes, toggleDislike, onNext, on
   return (
     <div className="onb-shell">
       <div className="onb-inner">
-        <div className="onb-eyebrow">Who2Root4</div>
+        <div style={{ fontFamily: "var(--font-heading)", fontWeight: 700, fontSize: 20, letterSpacing: "-0.01em", marginBottom: 14, color: "var(--text)" }}>
+          Who2Root4<sup className="w2r4-tm">TM</sup>
+        </div>
         <h1 className="onb-title">
           {isStep1 ?
           "Who's your team?" :
@@ -53,7 +59,15 @@ function TeamPickerStep({ step, fav, setFav, dislikes, toggleDislike, onNext, on
 
         {sortedDivisions.map((div, divIdx) => {
           const [conf, divName] = div.split(" ");
-          const abbrs = window.TEAMS_BY_DIVISION[`${conf} ${divName}`] || [];
+          const rawAbbrs = window.TEAMS_BY_DIVISION[`${conf} ${divName}`] || [];
+          const abbrs = rawAbbrs.slice().sort((a, b) => {
+            const ta = window.TEAMS[a], tb = window.TEAMS[b];
+            const aP = ta.record[0] / Math.max(1, ta.record[0] + ta.record[1]);
+            const bP = tb.record[0] / Math.max(1, tb.record[0] + tb.record[1]);
+            return bP - aP || tb.record[0] - ta.record[0];
+          });
+          const favDiv = fav ? window.TEAMS[fav]?.div : null;
+          const favConf = fav ? window.TEAMS[fav]?.conf : null;
           return (
             <div className="div-section" key={div}>
               <h4>{conf} {divName}</h4>
@@ -62,14 +76,16 @@ function TeamPickerStep({ step, fav, setFav, dislikes, toggleDislike, onNext, on
                   const t = window.TEAMS[abbr];
                   const selected = isStep1 ? fav === abbr : dislikes.has(abbr);
                   const isOwn = !isStep1 && abbr === fav;
-                  const baseStyle = { "--enter-delay": `${divIdx * 60 + i * 25}ms` };
+                  const isDivTeam = !isStep1 && !isOwn && t.div === favDiv && t.conf === favConf;
+                  const isGrayedOut = isOwn || isDivTeam;
+                  const tileStyle = { "--enter-delay": `${divIdx * 60 + i * 25}ms` };
                   return (
                     <button
                       key={abbr}
                       className={"team-tile" + (selected ? isStep1 ? " selected" : " disliked" : "")}
                       onClick={() => handleClick(abbr)}
-                      disabled={isOwn}
-                      style={isOwn ? { ...baseStyle, opacity: 0.35, cursor: "not-allowed" } : baseStyle}>
+                      disabled={isGrayedOut}
+                      style={tileStyle}>
                       
                       <div className="swatch" style={{ background: t.color }}></div>
                       <div>
