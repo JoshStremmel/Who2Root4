@@ -5,6 +5,8 @@
 Who2Root4 pulls live NFL data from the ESPN public API, builds a semantic RDF knowledge graph using the [holonic](https://pypi.org/project/holonic/) four-graph model, applies official NFL tiebreaker logic, and outputs a ranked list of games you should care about this week — and which team to cheer for in each.
 
 ---
+![Website preview](./assets/page-preview.png)
+---
 
 ## Install
 
