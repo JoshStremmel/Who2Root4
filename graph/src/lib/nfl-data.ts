@@ -452,20 +452,64 @@ export function buildWeekMeta(weekInfo: WeekInfo | null, season: number): WeekMe
   };
 }
 
+// ── Recompute team records for a sim-week snapshot ───────────────────────────
+// Counts only completed reg-season games from weeks strictly before upToWeekNum.
+
+export function buildTeamRecordsUpToWeek(
+  allEvents: ParsedEvent[],
+  baseTeams: Record<string, TeamData>,
+  upToWeekNum: number,
+): Record<string, TeamData> {
+  const teams: Record<string, TeamData> = {};
+  for (const [abbr, t] of Object.entries(baseTeams)) {
+    teams[abbr] = { ...t, record: [0, 0, 0], pf: 0, pa: 0, results: [] };
+  }
+  for (const ev of allEvents) {
+    if (!ev.completed || ev.seasonType !== "reg" || ev.weekNum >= upToWeekNum) continue;
+    const hT = teams[ev.home], aT = teams[ev.away];
+    if (!hT || !aT) continue;
+    const hS = ev.homeScore ?? 0, aS = ev.awayScore ?? 0;
+    const tie = hS === aS;
+    if (tie)       { hT.record[2]++; aT.record[2]++; }
+    else if (hS > aS) { hT.record[0]++; aT.record[1]++; }
+    else           { hT.record[1]++; aT.record[0]++; }
+    hT.pf += hS; hT.pa += aS;
+    aT.pf += aS; aT.pa += hS;
+    hT.results.push({ week: ev.weekNum, win: hS > aS, tie, pf: hS, pa: aS, oppAbbr: ev.away, home: true });
+    aT.results.push({ week: ev.weekNum, win: aS > hS, tie, pf: aS, pa: hS, oppAbbr: ev.home, home: false });
+  }
+  return teams;
+}
+
 // ── Build LoadedData for a specific week from cached AggregatedData ───────────
 
 export function buildLoadedData(aggData: AggregatedData, weekNum?: number): LoadedData {
   const season = aggData.latestSeason ?? new Date().getFullYear();
-  let weekInfo: WeekInfo | null;
 
   if (weekNum != null) {
+    // Sim-week: records reflect going INTO week N; games shown as upcoming
+    const teams = buildTeamRecordsUpToWeek(aggData.allEvents, aggData.teams, weekNum);
     const key = `reg-${String(weekNum).padStart(2, "0")}`;
-    const events = aggData.eventsByWeek[key];
-    weekInfo = events ? { key, type: "reg", weekNum, events } : pickCurrentWeek(aggData.eventsByWeek);
-  } else {
-    weekInfo = pickCurrentWeek(aggData.eventsByWeek);
+    const rawEvents = aggData.eventsByWeek[key];
+    // Strip scores so these games appear as upcoming in schedule + recs
+    const simEvents: ParsedEvent[] = (rawEvents ?? []).map(ev => ({
+      ...ev, completed: false, homeScore: null, awayScore: null, homeWinner: false,
+    }));
+    const weekInfo: WeekInfo | null = rawEvents
+      ? { key, type: "reg", weekNum, events: simEvents }
+      : pickCurrentWeek(aggData.eventsByWeek);
+    return {
+      teams,
+      schedule: buildSchedule(weekInfo, teams),
+      weekMeta: buildWeekMeta(weekInfo, season),
+      teamStrengths: buildTeamStrengths(teams),
+      eventsByWeek: aggData.eventsByWeek,
+      season,
+    };
   }
 
+  // Current week: full-season records, actual game states
+  const weekInfo = pickCurrentWeek(aggData.eventsByWeek);
   return {
     teams: aggData.teams,
     schedule: buildSchedule(weekInfo, aggData.teams),

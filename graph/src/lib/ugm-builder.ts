@@ -385,6 +385,66 @@ function playoffProbability(abbr: string, standing: StandingEntry | undefined, t
   return 0.01;
 }
 
+// ── Playoff edge builder ──────────────────────────────────────────────────────
+// Builds one directed edge per game in the schedule for all games that
+// involve at least one team in fav's conference. Includes completed games so
+// the graph always has edges regardless of how far into the season we are.
+
+function computePlayoffEdges(
+  loaded: LoadedData,
+  favAbbr: string,
+  dislikes: string[],
+  mode: string,
+): GraphEdge[] {
+  const fav = loaded.teams[favAbbr];
+  if (!fav) return [];
+
+  const edges: GraphEdge[] = [];
+
+  for (const g of loaded.schedule) {
+    if (g.home === favAbbr || g.away === favAbbr) continue;
+
+    const homeT = loaded.teams[g.home];
+    const awayT = loaded.teams[g.away];
+    // Only draw edges for games touching fav's conference
+    if (homeT?.conf !== fav.conf && awayT?.conf !== fav.conf) continue;
+
+    const h = modeScore(g.home, g.away, fav, mode, dislikes, loaded.teams, loaded);
+    const a = modeScore(g.away, g.home, fav, mode, dislikes, loaded.teams, loaded);
+
+    let rootFor: string, against: string, score: number;
+    if (h >= a) { rootFor = g.home; against = g.away; score = h; }
+    else        { rootFor = g.away; against = g.home; score = a; }
+
+    // Apply team-strength bonus (mirrors computeRecommendations)
+    if (score > 0) {
+      const hStr = loaded.teamStrengths[g.home]?.strengthScore ?? 0.5;
+      const aStr = loaded.teamStrengths[g.away]?.strengthScore ?? 0.5;
+      score = Math.min(score + 0.05 * (hStr + aStr) / 2, 1.0);
+    }
+
+    const edgeType: "improvesOdds" | "hurtsOdds" | "neutral" =
+      score >= 0.10 ? "improvesOdds" : "neutral";
+
+    const reasoning =
+      buildReasoning(rootFor, against, fav, mode, score, loaded.teams, loaded)[0] ?? "";
+
+    edges.push({
+      id: `edge_${g.id}`,
+      source: `urn:nfl:team:${rootFor}`,
+      target: `urn:nfl:team:${against}`,
+      type: edgeType,
+      impactScore: Math.max(score, 0.05), // floor so neutral edges still render
+      week: loaded.weekMeta.week,
+      gameId: g.id,
+      recommendationScore: Math.round(score * 10),
+      reasoning,
+    });
+  }
+
+  return edges;
+}
+
 // ── buildGraphData ─────────────────────────────────────────────────────────────
 
 export function buildGraphData(
@@ -394,7 +454,6 @@ export function buildGraphData(
   mode = "overall",
 ): { ugm: UGM; graphData: GraphData } {
   const standings = computeStandings(loaded.teams);
-  const recs = computeRecommendations(favAbbr, dislikes, mode, loaded);
 
   // Collect all teams in current week + fav
   const teamsInWeek = new Set<string>([favAbbr]);
@@ -422,24 +481,8 @@ export function buildGraphData(
     });
   }
 
-  // Build edges from recommendations with positive score
-  const edges: GraphEdge[] = [];
-  for (const rec of recs) {
-    if (rec.score <= 0) continue;
-    const edgeType: "improvesOdds" | "hurtsOdds" | "neutral" =
-      rec.score >= 0.05 ? "improvesOdds" : "neutral";
-    edges.push({
-      id: `edge_${rec.gameId}_${rec.rootFor}_${rec.against}`,
-      source: `urn:nfl:team:${rec.rootFor}`,
-      target: `urn:nfl:team:${rec.against}`,
-      type: edgeType,
-      impactScore: Math.min(1, rec.score),
-      week: loaded.weekMeta.week,
-      gameId: rec.gameId,
-      recommendationScore: Math.round(rec.score * 10),
-      reasoning: rec.reasoning,
-    });
-  }
+  // Build edges for all same-conference games (completed or upcoming)
+  const edges = computePlayoffEdges(loaded, favAbbr, dislikes, mode);
 
   // Build UGM instance
   const ugm = new UGM();
