@@ -57,42 +57,35 @@ function applyTeamPositions(cy: Core) {
   cy.fit(cy.elements(), 40);
 }
 
-// Apply seed text and conference glow inline.
+// Apply seed number as an SVG background-image on seeded nodes.
 //
-// Why inline rather than stylesheet?
-// The g3-toolkit CytoscapeCanvas applies its own default stylesheet which
-// can reset shadow-opacity to 0 and does not know about per-node bg images.
-// Inline styles (node.style) have the highest priority in Cytoscape — they
-// always win, regardless of stylesheet order.
+// Glow (outline + shadow) lives in the stylesheet conference selectors —
+// stylesheet rules are applied reliably by Cytoscape's CSS engine on every
+// rebuild. Inline bypass styles (node.style) were tried but proved
+// unreliable for glow across cy rebuilds.
 //
-// SVG centering: use y="50" + dominant-baseline="middle" so the text
-// is always at the geometric centre of the 100×100 viewBox.  background-fit
-// "cover" + explicit 50% background-position ensures it fills and stays
-// centred at every zoom level.
+// background-fit/clip/position are in the base node stylesheet rule so
+// Cytoscape always centers the seed SVG correctly. Only background-image
+// needs to change per node because each seed number differs.
 function applyNodeStyles(cy: Core) {
-  cy.nodes().forEach(node => {
-    const conf  = node.data("conference") as string;
-    const seed  = node.data("playoffSeed") as number | null;
-
-    // ── Conference glow ──
-    const glowColor = conf === "AFC" ? "#ef4444" : "#3b82f6";
-    node.style("shadow-color",    glowColor);
-    node.style("shadow-blur",     30);
-    node.style("shadow-offset-x", 0);
-    node.style("shadow-offset-y", 0);
-    node.style("shadow-opacity",  0.85);
-
-    // ── Seed badge inside the circle ──
-    if (seed != null) {
-      const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text x='50' y='50' text-anchor='middle' dominant-baseline='middle' fill='#ffffff' fill-opacity='0.92' font-size='36' font-weight='900' font-family='system-ui,-apple-system,Arial,sans-serif'>#${seed}</text></svg>`;
-      node.style("background-image",      "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
-      node.style("background-fit",        "cover");
-      node.style("background-clip",       "node");
-      node.style("background-position-x", "50%");
-      node.style("background-position-y", "50%");
-    } else {
-      node.style("background-image", "none");
-    }
+  cy.batch(() => {
+    cy.nodes().forEach(node => {
+      const seed = node.data("playoffSeed") as number | null;
+      if (seed != null) {
+        const svg = [
+          `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>`,
+          `<text x='50' y='50' text-anchor='middle' dominant-baseline='middle'`,
+          ` fill='#ffffff' fill-opacity='0.92'`,
+          ` font-size='36' font-weight='900'`,
+          ` font-family='system-ui,-apple-system,Arial,sans-serif'>#${seed}</text>`,
+          `</svg>`,
+        ].join("");
+        node.style("background-image",
+          "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
+      } else {
+        node.style("background-image", "none");
+      }
+    });
   });
 }
 
@@ -103,30 +96,58 @@ function applyNodeStyles(cy: Core) {
 // Edge labels suppressed — colored arrows + legend explain them.
 
 const PLAYOFF_GRAPH_STYLESHEET = [
-  // Base node: abbreviation BELOW the node; white text with dark outline
-  // so it's readable on any background (light or dark canvas).
+  // Base node: abbreviation BELOW the node; white text with dark outline.
+  // background-fit/clip/position center the seed SVG inside every node.
   {
     selector: "node",
     style: {
-      color:                 "#ffffff",
-      "font-size":           "10px",
-      "font-weight":         "bold",
-      "text-valign":         "bottom",
-      "text-halign":         "center",
-      "text-margin-y":       8,
-      "text-outline-color":  "#1f2937",
-      "text-outline-width":  1.5,
-      "text-outline-opacity": 0.75,
+      color:                   "#ffffff",
+      "font-size":             "10px",
+      "font-weight":           "bold",
+      "text-valign":           "bottom",
+      "text-halign":           "center",
+      "text-margin-y":         8,
+      "text-outline-color":    "#1f2937",
+      "text-outline-width":    1.5,
+      "text-outline-opacity":  0.75,
+      "background-fit":        "contain",
+      "background-clip":       "node",
+      "background-position-x": "50%",
+      "background-position-y": "50%",
     },
   },
-  // Conference fallback colors (glow is applied inline by applyNodeStyles)
+  // Conference fallback colors + glow (outline ring + shadow blur)
   {
     selector: 'node[conference = "AFC"]',
-    style: { "background-color": "#b91c1c" },
+    style: {
+      "background-color": "#b91c1c",
+      "outline-color":    "#ef4444",
+      "outline-width":    10,
+      "outline-opacity":  0.65,
+      "outline-style":    "solid",
+      "outline-offset":   2,
+      "shadow-color":     "#ef4444",
+      "shadow-blur":      30,
+      "shadow-offset-x":  0,
+      "shadow-offset-y":  0,
+      "shadow-opacity":   0.8,
+    },
   },
   {
     selector: 'node[conference = "NFC"]',
-    style: { "background-color": "#1d4ed8" },
+    style: {
+      "background-color": "#1d4ed8",
+      "outline-color":    "#3b82f6",
+      "outline-width":    10,
+      "outline-opacity":  0.65,
+      "outline-style":    "solid",
+      "outline-offset":   2,
+      "shadow-color":     "#3b82f6",
+      "shadow-blur":      30,
+      "shadow-offset-x":  0,
+      "shadow-offset-y":  0,
+      "shadow-opacity":   0.8,
+    },
   },
   // Team brand color (same palette as the main page) — overrides conf fallback
   {
