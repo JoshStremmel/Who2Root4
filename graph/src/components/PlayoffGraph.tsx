@@ -57,16 +57,39 @@ function applyTeamPositions(cy: Core) {
   cy.fit(cy.elements(), 40);
 }
 
-// Apply seed number as an inline SVG background image inside each node.
-// Cytoscape only supports one label per node, so we use background-image
-// for the seed text (inside) while the label positions the abbreviation below.
-function applyNodeSeedImages(cy: Core) {
+// Apply seed text and conference glow inline.
+//
+// Why inline rather than stylesheet?
+// The g3-toolkit CytoscapeCanvas applies its own default stylesheet which
+// can reset shadow-opacity to 0 and does not know about per-node bg images.
+// Inline styles (node.style) have the highest priority in Cytoscape — they
+// always win, regardless of stylesheet order.
+//
+// SVG centering: use y="50" + dominant-baseline="middle" so the text
+// is always at the geometric centre of the 100×100 viewBox.  background-fit
+// "cover" + explicit 50% background-position ensures it fills and stays
+// centred at every zoom level.
+function applyNodeStyles(cy: Core) {
   cy.nodes().forEach(node => {
-    const seed = node.data("playoffSeed") as number | null;
+    const conf  = node.data("conference") as string;
+    const seed  = node.data("playoffSeed") as number | null;
+
+    // ── Conference glow ──
+    const glowColor = conf === "AFC" ? "#ef4444" : "#3b82f6";
+    node.style("shadow-color",    glowColor);
+    node.style("shadow-blur",     30);
+    node.style("shadow-offset-x", 0);
+    node.style("shadow-offset-y", 0);
+    node.style("shadow-opacity",  0.85);
+
+    // ── Seed badge inside the circle ──
     if (seed != null) {
-      const svgText = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text x='50' y='58' text-anchor='middle' dominant-baseline='middle' fill='rgba(255,255,255,0.92)' font-size='36' font-weight='900' font-family='system-ui,-apple-system,Arial,sans-serif'>#${seed}</text></svg>`;
-      node.style("background-image", "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgText));
-      node.style("background-fit", "cover");
+      const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text x='50' y='50' text-anchor='middle' dominant-baseline='middle' fill='#ffffff' fill-opacity='0.92' font-size='36' font-weight='900' font-family='system-ui,-apple-system,Arial,sans-serif'>#${seed}</text></svg>`;
+      node.style("background-image",      "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
+      node.style("background-fit",        "cover");
+      node.style("background-clip",       "node");
+      node.style("background-position-x", "50%");
+      node.style("background-position-y", "50%");
     } else {
       node.style("background-image", "none");
     }
@@ -75,7 +98,7 @@ function applyNodeSeedImages(cy: Core) {
 
 // ── Stylesheet ────────────────────────────────────────────────────────────────
 //
-// Seed text is rendered via SVG background-image (see applyNodeSeedImages).
+// Seed text is rendered via SVG background-image (see applyNodeStyles).
 // Abbreviation appears below the node via text-valign: bottom.
 // Edge labels suppressed — colored arrows + legend explain them.
 
@@ -96,28 +119,14 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       "text-outline-opacity": 0.75,
     },
   },
-  // Conference fallback colors + glow shadows
+  // Conference fallback colors (glow is applied inline by applyNodeStyles)
   {
     selector: 'node[conference = "AFC"]',
-    style: {
-      "background-color":  "#b91c1c",
-      "shadow-blur":       18,
-      "shadow-color":      "#ef4444",
-      "shadow-offset-x":   0,
-      "shadow-offset-y":   0,
-      "shadow-opacity":    0.65,
-    },
+    style: { "background-color": "#b91c1c" },
   },
   {
     selector: 'node[conference = "NFC"]',
-    style: {
-      "background-color":  "#1d4ed8",
-      "shadow-blur":       18,
-      "shadow-color":      "#3b82f6",
-      "shadow-offset-x":   0,
-      "shadow-offset-y":   0,
-      "shadow-opacity":    0.65,
-    },
+    style: { "background-color": "#1d4ed8" },
   },
   // Team brand color (same palette as the main page) — overrides conf fallback
   {
@@ -247,9 +256,9 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     (cy: Core) => {
       cyRef.current = cy;
       // Apply deterministic division layout + seed images after initial layout
-      cy.one("layoutstop", () => { applyTeamPositions(cy); applyNodeSeedImages(cy); });
+      cy.one("layoutstop", () => { applyTeamPositions(cy); applyNodeStyles(cy); });
       // Also apply immediately for preset layout
-      setTimeout(() => { applyTeamPositions(cy); applyNodeSeedImages(cy); }, 0);
+      setTimeout(() => { applyTeamPositions(cy); applyNodeStyles(cy); }, 0);
 
       cy.on("tap", (evt) => {
         if (evt.target === cy) { selectNodes([]); selectEdges([]); }
@@ -264,7 +273,7 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    setTimeout(() => { applyTeamPositions(cy); applyNodeSeedImages(cy); }, 50);
+    setTimeout(() => { applyTeamPositions(cy); applyNodeStyles(cy); }, 50);
   }, [ugm]);
 
   // Apply filter visibility changes
