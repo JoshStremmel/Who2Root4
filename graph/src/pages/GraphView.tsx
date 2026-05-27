@@ -171,7 +171,7 @@ export function GraphView() {
       {/* Top nav bar */}
       <header style={pageStyles.header}>
         <a
-          href="/"
+          href="../"
           style={pageStyles.backLink}
           title="Back to main app"
           aria-label="Back"
@@ -282,9 +282,9 @@ function ErrorPanel({
           {message}
         </p>
         <p style={{ color: "var(--text-faint)", fontSize: 12, marginBottom: 16 }}>
-          Make sure the Who2Root4 API server is running:
+          The graph view requires the Who2Root4 API server.
           <br />
-          <code>uvicorn api.server:app --reload --port 8000</code>
+          Run locally: <code>uvicorn api.server:app --reload --port 8000</code>
         </p>
         <button style={loadStyles.retryBtn} onClick={onRetry}>
           Retry
