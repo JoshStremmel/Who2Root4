@@ -32,7 +32,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build graph
-        run: pnpm --filter graph run build
+        working-directory: graph
+        run: pnpm exec vite build
 
       - name: Assemble site
         run: |
