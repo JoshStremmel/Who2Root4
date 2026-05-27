@@ -10,8 +10,11 @@ export interface GraphNode {
   losses: number;
   playoffSeed: number | null;
   playoffProbability: number;
-  color: string;        // hex without #
-  logoUrl: string;
+  color: string;              // hex without # (kept for reference, not used in graph colors)
+  standingKind: "division_leader" | "wildcard" | "in_hunt" | "eliminated";
+  nodeLabel: string;          // abbreviation + optional seed, e.g. "CIN\n#3"
+  isFavorite: boolean;
+  is1SeedContender: boolean;
 }
 
 export interface GraphEdge {
