@@ -1,6 +1,7 @@
 {
   "name": "who2root4",
   "private": true,
+  "packageManager": "pnpm@11.3.0",
   "scripts": {
     "dev:graph": "pnpm --filter graph dev",
     "build:graph": "pnpm --filter graph build",
