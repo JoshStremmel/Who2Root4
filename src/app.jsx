@@ -52,7 +52,7 @@ function TopNav({ tab, setTab, fav, setFav, theme, setTheme, onOpenOnboarding, u
         <button className={"tab" + (tab === "scenarios" ? " active" : "")} onClick={() => setTab("scenarios")}>
           Scenarios
         </button>
-        <a className="tab tab-graph" href="/Who2Root4/graph/" title="Interactive playoff picture graph">
+        <a className="tab tab-graph" href="/graph/" title="Interactive playoff picture graph">
           Graph View ↗
         </a>
       </nav>
