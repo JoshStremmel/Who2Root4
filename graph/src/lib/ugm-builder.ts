@@ -212,11 +212,6 @@ function computePlayoffEdges(
       score = Math.min(score + 0.05 * (hStr + aStr) / 2, 1.0);
     }
 
-    // Division rivals losing scores 0.30+; non-div conf rivals score ~0.20.
-    // Threshold at 0.22 so intra-conf non-division games fall to "neutral".
-    const edgeType: "improvesOdds" | "hurtsOdds" | "neutral" =
-      score >= 0.22 ? "improvesOdds" : "neutral";
-
     const reasoning =
       buildReasoning(rootFor, against, fav, mode, score, loaded.teams, loaded)[0] ?? "";
 
@@ -224,33 +219,52 @@ function computePlayoffEdges(
       id: `edge_${g.id}`,
       source: `urn:nfl:team:${rootFor}`,
       target: `urn:nfl:team:${against}`,
-      type: edgeType,
+      type: "improvesOdds",
       impactScore: Math.max(score, 0.05),
       week: loaded.weekMeta.week,
       gameId: g.id,
       recommendationScore: Math.round(score * 10),
       reasoning,
     });
+  }
 
-    // Reverse edge: if `against` is a conference rival, their winning hurts fav.
-    // We emit a hurtsOdds edge in the opposite direction so both sides of the
-    // game are visible — green "root for X" and red "X's rival winning hurts you".
-    const againstTeam = loaded.teams[against];
-    if (againstTeam?.conf === fav.conf && score >= 0.10) {
+  return edges;
+}
+
+// ── winsOver edge builder ──────────────────────────────────────────────────────
+// One directed edge per same-conference head-to-head result this season.
+// Only includes teams that appear in the current graph (nodeIds).
+
+function computeWinsOverEdges(
+  loaded: LoadedData,
+  nodeIds: Set<string>,
+): GraphEdge[] {
+  const edges: GraphEdge[] = [];
+  const seen = new Set<string>();
+  for (const abbr of nodeIds) {
+    const team = loaded.teams[abbr];
+    if (!team) continue;
+    for (const result of team.results) {
+      if (!result.win) continue;
+      if (!nodeIds.has(result.oppAbbr)) continue;
+      const oppTeam = loaded.teams[result.oppAbbr];
+      if (!oppTeam || oppTeam.conf !== team.conf) continue;
+      const key = `${abbr}_${result.oppAbbr}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       edges.push({
-        id: `edge_${g.id}_hurt`,
-        source: `urn:nfl:team:${against}`,
-        target: `urn:nfl:team:${rootFor}`,
-        type: "hurtsOdds",
-        impactScore: Math.max(score, 0.05),
-        week: loaded.weekMeta.week,
-        gameId: g.id,
-        recommendationScore: Math.round(score * 10),
-        reasoning,
+        id: `wo_${abbr}_${result.oppAbbr}_w${result.week}`,
+        source: `urn:nfl:team:${abbr}`,
+        target: `urn:nfl:team:${result.oppAbbr}`,
+        type: "winsOver",
+        impactScore: 0.3,
+        week: result.week,
+        gameId: `wo_${abbr}_${result.oppAbbr}_w${result.week}`,
+        recommendationScore: 0,
+        reasoning: `${abbr} beat ${result.oppAbbr} in Week ${result.week}`,
       });
     }
   }
-
   return edges;
 }
 
@@ -314,8 +328,11 @@ export function buildGraphData(
     });
   }
 
-  // Build edges for all same-conference games (completed or upcoming)
-  const edges = computePlayoffEdges(loaded, favAbbr, dislikes, mode);
+  // Build edges: playoff impact edges + head-to-head winsOver edges
+  const edges = [
+    ...computePlayoffEdges(loaded, favAbbr, dislikes, mode),
+    ...computeWinsOverEdges(loaded, teamsInWeek),
+  ];
 
   // Build UGM instance — no team colors or logos (copyright); use conference for styling
   const ugm = new UGM();

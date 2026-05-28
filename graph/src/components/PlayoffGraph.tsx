@@ -188,14 +188,6 @@ const PLAYOFF_GRAPH_STYLESHEET = [
     style: { "line-color": "#22c55e", "target-arrow-color": "#22c55e" },
   },
   {
-    selector: 'edge[type = "hurtsOdds"]',
-    style: { "line-color": "#ef4444", "target-arrow-color": "#ef4444" },
-  },
-  {
-    selector: 'edge[type = "neutral"]',
-    style: { "line-color": "#9ca3af", "target-arrow-color": "#9ca3af" },
-  },
-  {
     selector: 'edge[type = "winsOver"]',
     style: { "line-color": "#6b7280", "target-arrow-color": "#6b7280" },
   },
@@ -236,7 +228,7 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     new Set(["division_leader", "wildcard", "in_hunt", "eliminated"]),
   );
   const [visibleEdgeTypes, setVisibleEdgeTypes] = useState(
-    new Set(["improvesOdds", "hurtsOdds", "neutral", "winsOver"]),
+    new Set(["improvesOdds", "winsOver"]),
   );
   const [only1Seed, setOnly1Seed] = useState(false);
 
@@ -494,8 +486,6 @@ const KIND_LABELS: { key: string; label: string }[] = [
 
 const EDGE_TYPE_LABELS: { key: string; label: string; color: string }[] = [
   { key: "improvesOdds", label: "Improves Odds", color: "#22c55e" },
-  { key: "hurtsOdds",    label: "Hurts Odds",    color: "#ef4444" },
-  { key: "neutral",      label: "Neutral",       color: "#9ca3af" },
   { key: "winsOver",     label: "Wins Over",     color: "#6b7280" },
 ];
 
@@ -651,7 +641,7 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
             const otherAbbr = (isSource ? e.target : e.source).split(":").pop() ?? "";
             const dotColor =
               e.type === "improvesOdds" ? "#22c55e"
-              : e.type === "hurtsOdds"  ? "#ef4444"
+              : e.type === "winsOver"   ? "#6b7280"
               : "#9ca3af";
             const edgeLabel =
               e.type === "winsOver"
@@ -690,7 +680,7 @@ function EdgeDetail({ edge }: { edge: GraphEdge }) {
   const against = edge.target.split(":").pop() ?? "";
   const dotColor =
     edge.type === "improvesOdds" ? "#22c55e"
-    : edge.type === "hurtsOdds"  ? "#ef4444"
+    : edge.type === "winsOver"   ? "#6b7280"
     : "#9ca3af";
   return (
     <div style={{ padding: "8px 12px", fontSize: 13 }}>
@@ -752,7 +742,7 @@ function ImpactChart({ graphData }: { graphData: GraphData }) {
           const y    = CHART_H - barH;
           const color =
             e.type === "improvesOdds" ? "#22c55e"
-            : e.type === "hurtsOdds"  ? "#ef4444"
+            : e.type === "winsOver"   ? "#6b7280"
             : "#9ca3af";
           const lx   = x + BAR_W / 2;
           const ly   = CHART_H + 10;
