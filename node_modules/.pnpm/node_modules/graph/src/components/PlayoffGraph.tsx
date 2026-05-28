@@ -74,10 +74,10 @@ function applyNodeStyles(cy: Core) {
       if (seed != null) {
         const svg = [
           `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>`,
-          `<text x='50' y='50' text-anchor='middle' dominant-baseline='middle'`,
-          ` fill='#ffffff' fill-opacity='0.92'`,
-          ` font-size='36' font-weight='900'`,
-          ` font-family='system-ui,-apple-system,Arial,sans-serif'>#${seed}</text>`,
+          `<text x='50' y='50' text-anchor='middle' dominant-baseline='central'`,
+          ` fill='#ffffff' fill-opacity='0.95'`,
+          ` font-size='52' font-weight='900'`,
+          ` font-family='system-ui,-apple-system,Arial,sans-serif'>${seed}</text>`,
           `</svg>`,
         ].join("");
         node.style("background-image",
@@ -193,6 +193,10 @@ const PLAYOFF_GRAPH_STYLESHEET = [
   {
     selector: 'edge[type = "neutral"]',
     style: { "line-color": "#9ca3af", "target-arrow-color": "#9ca3af" },
+  },
+  {
+    selector: 'edge[type = "winsOver"]',
+    style: { "line-color": "#6b7280", "target-arrow-color": "#6b7280" },
   },
   // Width ← impact score
   {
@@ -439,11 +443,11 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
             <div style={styles.bottomResizeHandle} onMouseDown={startBottomResize} />
           )}
           <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-            <div style={styles.legendPanel}>
-              <CanvasLegend ugm={ugm} encoding={LEGEND_ENCODING} />
-            </div>
             <div style={{ flex: 1, overflow: "hidden" }}>
               <ImpactChart graphData={graphData} />
+            </div>
+            <div style={styles.legendPanel}>
+              <CanvasLegend ugm={ugm} encoding={LEGEND_ENCODING} />
             </div>
           </div>
         </div>
@@ -614,10 +618,14 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
               e.type === "improvesOdds" ? "#22c55e"
               : e.type === "hurtsOdds"  ? "#ef4444"
               : "#9ca3af";
+            const edgeLabel =
+              e.type === "winsOver"
+                ? isSource ? `Beat ${otherAbbr}` : `Lost to ${otherAbbr}`
+                : isSource ? `Root for ${otherAbbr}` : `Against ${otherAbbr}`;
             return (
               <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
-                <span style={{ flex: 1 }}>{isSource ? "Root for" : "Against"} {otherAbbr}</span>
+                <span style={{ flex: 1 }}>{edgeLabel}</span>
                 {e.recommendationScore > 0 && (
                   <span style={{ fontWeight: 700, color: dotColor, fontSize: 12 }}>{e.recommendationScore}</span>
                 )}
@@ -652,13 +660,17 @@ function EdgeDetail({ edge }: { edge: GraphEdge }) {
   return (
     <div style={{ padding: "8px 12px", fontSize: 13 }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>
-        <span style={{ color: dotColor }}>{rootFor}</span> vs {against}
+        <span style={{ color: dotColor }}>{rootFor}</span>
+        {edge.type === "winsOver" ? " beat " : " vs "}
+        {against}
       </div>
-      <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>
-        Impact score: <strong>{edge.recommendationScore}</strong>
-      </div>
+      {edge.type !== "winsOver" && (
+        <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>
+          Impact score: <strong>{edge.recommendationScore}</strong>
+        </div>
+      )}
       <div style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: 11 }}>
-        {edge.reasoning || "No reasoning available"}
+        {edge.reasoning || (edge.type === "winsOver" ? "Head-to-head result" : "No reasoning available")}
       </div>
     </div>
   );
@@ -800,10 +812,10 @@ const styles = {
     userSelect: "none" as const,
   },
   legendPanel: {
-    flexShrink:  0,
-    borderRight: "1px solid var(--border)",
-    overflowY:   "auto" as const,
-    padding:     "4px 8px",
+    flexShrink: 0,
+    borderLeft: "1px solid var(--border)",
+    overflowY:  "auto" as const,
+    padding:    "4px 8px",
   },
   chartToggle: {
     width:      "100%",
