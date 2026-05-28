@@ -288,6 +288,8 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
   const [activeLayout, setActiveLayout] = useState<LayoutType>("default");
   const layoutRef = useRef<LayoutType>("default");
+  // Tracks current firstNode inside tap-handler closures (avoids stale closure)
+  const firstNodeRef = useRef<string | null>(null);
   const [legendPos, setLegendPos] = useState({ x: 10, y: 60 });
   const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
@@ -352,13 +354,17 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
       });
       cy.on("tap", "node", (evt) => { selectNodes([evt.target.id()]); setSelectedEdge(null); });
       cy.on("tap", "edge", (evt) => {
-        const e = evt.target;
-        selectNodes([]);
+        const e   = evt.target;
+        const src = e.source().id();
+        const tgt = e.target().id();
+        const cur = firstNodeRef.current;
+        // Only deselect the node if this edge isn't connected to it
+        if (!cur || (src !== cur && tgt !== cur)) selectNodes([]);
         selectEdges([e.id()]);
         setSelectedEdge({
           id: e.id(),
-          source: e.source().id(),
-          target: e.target().id(),
+          source: src,
+          target: tgt,
           type:   e.data("type") as GraphEdge["type"],
           impactScore:         e.data("impactScore")         ?? 0,
           week:                e.data("week")                ?? 0,
@@ -410,6 +416,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
 
   // Selected element
   const firstNode = [...selectedNodeIds][0] ?? null;
+  firstNodeRef.current = firstNode;   // keep ref in sync for tap-handler closures
   const selectedNodeData = firstNode
     ? graphData.nodes.find(n => n.id === firstNode) ?? null
     : null;
@@ -483,11 +490,11 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
           (e.source().id() === firstNode || e.target().id() === firstNode)
         ).forEach(e => { connectedIds.add(e.source().id()); connectedIds.add(e.target().id()); });
         // Dim non-connected nodes (including their conf glow via opacity)
-        cy.nodes().filter(n => n.style("display") !== "none" && !connectedIds.has(n.id()))
+        cy.nodes().filter(n => !connectedIds.has(n.id()))
           .style("opacity", 0.15);
         // Dim edges where both endpoints are non-connected
+        // (no display check — setting opacity on hidden edges is harmless)
         cy.edges().filter(e =>
-          e.style("display") !== "none" &&
           !connectedIds.has(e.source().id()) &&
           !connectedIds.has(e.target().id())
         ).style("opacity", 0.1);
@@ -624,18 +631,17 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         {/* Inspector panel */}
         <div style={{ ...styles.inspector, width: narrow ? "100%" : inspectorWidth, maxHeight: narrow ? 320 : undefined }}>
           <div style={styles.inspectorHeader}>
-            {selectedNodeData
-              ? "Team Details"
-              : selectedEdge
-                ? "Game Details"
+            {selectedEdge
+              ? "Game Details"
+              : selectedNodeData
+                ? "Team Details"
                 : "Click any team to view details"}
           </div>
-          {selectedNodeData && (
-            <TeamPanel node={selectedNodeData} graphData={graphData} />
-          )}
-          {selectedEdge && !selectedNodeData && (
+          {selectedEdge ? (
             <EdgeDetail edge={selectedEdge} />
-          )}
+          ) : selectedNodeData ? (
+            <TeamPanel node={selectedNodeData} graphData={graphData} />
+          ) : null}
         </div>
       </div>
 
