@@ -212,8 +212,10 @@ function computePlayoffEdges(
       score = Math.min(score + 0.05 * (hStr + aStr) / 2, 1.0);
     }
 
+    // Division rivals losing scores 0.30+; non-div conf rivals score ~0.20.
+    // Threshold at 0.22 so intra-conf non-division games fall to "neutral".
     const edgeType: "improvesOdds" | "hurtsOdds" | "neutral" =
-      score >= 0.10 ? "improvesOdds" : "neutral";
+      score >= 0.22 ? "improvesOdds" : "neutral";
 
     const reasoning =
       buildReasoning(rootFor, against, fav, mode, score, loaded.teams, loaded)[0] ?? "";
@@ -223,12 +225,30 @@ function computePlayoffEdges(
       source: `urn:nfl:team:${rootFor}`,
       target: `urn:nfl:team:${against}`,
       type: edgeType,
-      impactScore: Math.max(score, 0.05), // floor so neutral edges still render
+      impactScore: Math.max(score, 0.05),
       week: loaded.weekMeta.week,
       gameId: g.id,
       recommendationScore: Math.round(score * 10),
       reasoning,
     });
+
+    // Reverse edge: if `against` is a conference rival, their winning hurts fav.
+    // We emit a hurtsOdds edge in the opposite direction so both sides of the
+    // game are visible — green "root for X" and red "X's rival winning hurts you".
+    const againstTeam = loaded.teams[against];
+    if (againstTeam?.conf === fav.conf && score >= 0.10) {
+      edges.push({
+        id: `edge_${g.id}_hurt`,
+        source: `urn:nfl:team:${against}`,
+        target: `urn:nfl:team:${rootFor}`,
+        type: "hurtsOdds",
+        impactScore: Math.max(score, 0.05),
+        week: loaded.weekMeta.week,
+        gameId: g.id,
+        recommendationScore: Math.round(score * 10),
+        reasoning,
+      });
+    }
   }
 
   return edges;
