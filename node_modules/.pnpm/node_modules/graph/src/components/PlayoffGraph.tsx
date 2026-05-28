@@ -74,9 +74,9 @@ function applyNodeStyles(cy: Core) {
       if (seed != null) {
         const svg = [
           `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>`,
-          `<text x='50' y='50' dy='0.35em' text-anchor='middle'`,
+          `<text x='50' y='50' dominant-baseline='central' text-anchor='middle'`,
           ` fill='#ffffff' fill-opacity='0.95'`,
-          ` font-size='52' font-weight='900'`,
+          ` font-size='44' font-weight='900'`,
           ` font-family='system-ui,-apple-system,Arial,sans-serif'>${seed}</text>`,
           `</svg>`,
         ].join("");
