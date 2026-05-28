@@ -113,40 +113,6 @@ function modeScore(
   return score;
 }
 
-// ── Reasoning builder ─────────────────────────────────────────────────────────
-
-function buildReasoning(
-  _rootAbbr: string, againstAbbr: string,
-  fav: TeamData, mode: string, _score: number,
-  teams: Record<string, TeamData>, loaded: LoadedData,
-): string[] {
-  const opp = teams[againstAbbr];
-  if (!opp) return ["no direct playoff impact"];
-  const targetByMode: Record<string, string> = {
-    division: "division title odds", conf_one_seed: "#1 seed odds",
-    wildcard: "wild card odds", overall: "wild card odds", tank: "draft slot",
-  };
-  const target = targetByMode[mode] ?? "playoff odds";
-
-  if (opp.div === fav.div && opp.conf === fav.conf) {
-    const fGB = gamesBack(fav, teams), oGB = gamesBack(opp, teams), wr = weeksRemaining(loaded);
-    if (inDivisionContention(fav, teams, loaded) && inDivisionContention(opp, teams, loaded)) {
-      let gbStr: string;
-      if (fGB === 0 && oGB > 0)       gbStr = `${againstAbbr} is ${oGB.toFixed(1)} GB behind you`;
-      else if (oGB === 0 && fGB > 0)  gbStr = `you are ${fGB.toFixed(1)} GB behind ${againstAbbr}`;
-      else if (fGB < oGB)              gbStr = `${againstAbbr} is ${(oGB - fGB).toFixed(1)} GB behind you`;
-      else if (oGB < fGB)              gbStr = `you are ${(fGB - oGB).toFixed(1)} GB behind ${againstAbbr}`;
-      else                             gbStr = "tied in the division";
-      return [`${againstAbbr} is a division rival (${gbStr}, ${wr} weeks left) — their loss directly helps`];
-    }
-    return [`${againstAbbr} is a division rival — their loss improves ${target}`];
-  }
-  if (opp.conf === fav.conf) {
-    if (mode === "conf_one_seed") return [`${againstAbbr} (${opp.record[0]}W) is a ${fav.conf} rival — their loss improves ${target}`];
-    return [`${againstAbbr} is a conference competitor — their loss improves ${target}`];
-  }
-  return ["no direct playoff impact"];
-}
 
 // ── Playoff probability heuristic ─────────────────────────────────────────────
 
@@ -175,60 +141,71 @@ function playoffProbability(abbr: string, standing: StandingEntry | undefined, t
 }
 
 // ── Playoff edge builder ──────────────────────────────────────────────────────
-// Builds one directed edge per game in the schedule for all games that
-// involve at least one team in fav's conference. Includes completed games so
-// the graph always has edges regardless of how far into the season we are.
+// For every scheduled game (A vs B) and every other team C, computes the net
+// effect of A winning on C's playoff odds, then emits:
+//   • improvesOdds A→C when A winning is a net positive for C
+//   • hurtsOdds   A→C when A winning is a net negative for C
+// (and the symmetric edge for B).  One edge per (type, source, target) pair —
+// the highest-scoring one wins when multiple games produce the same key.
 
-function computePlayoffEdges(
-  loaded: LoadedData,
-  favAbbr: string,
-  dislikes: string[],
-  mode: string,
-): GraphEdge[] {
-  const fav = loaded.teams[favAbbr];
-  if (!fav) return [];
+function computeAllPlayoffEdges(loaded: LoadedData): GraphEdge[] {
+  const mode = "overall";
+  const dislikes: string[] = [];
+  const edgeMap = new Map<string, GraphEdge>();
 
-  const edges: GraphEdge[] = [];
+  const upsert = (edge: GraphEdge) => {
+    const ex = edgeMap.get(edge.id);
+    if (!ex || edge.impactScore > ex.impactScore) edgeMap.set(edge.id, edge);
+  };
 
   for (const g of loaded.schedule) {
-    if (g.home === favAbbr || g.away === favAbbr) continue;
+    if (!loaded.teams[g.home] || !loaded.teams[g.away]) continue;
+    const sBonus = 0.05 * (
+      (loaded.teamStrengths[g.home]?.strengthScore ?? 0.5) +
+      (loaded.teamStrengths[g.away]?.strengthScore ?? 0.5)
+    ) / 2;
 
-    const homeT = loaded.teams[g.home];
-    const awayT = loaded.teams[g.away];
-    // Only draw edges for games touching fav's conference
-    if (homeT?.conf !== fav.conf && awayT?.conf !== fav.conf) continue;
+    for (const [abbr, fav] of Object.entries(loaded.teams)) {
+      if (abbr === g.home || abbr === g.away) continue;
 
-    const h = modeScore(g.home, g.away, fav, mode, dislikes, loaded.teams, loaded);
-    const a = modeScore(g.away, g.home, fav, mode, dislikes, loaded.teams, loaded);
+      // Net effect of home winning on fav's odds.
+      // Positive → home winning helps fav (away is fav's rival).
+      // Negative → home winning hurts fav (home is fav's rival).
+      const homeHelps = modeScore(g.home, g.away, fav, mode, dislikes, loaded.teams, loaded);
+      const awayHelps = modeScore(g.away, g.home, fav, mode, dislikes, loaded.teams, loaded);
+      const net = homeHelps - awayHelps;
+      if (Math.abs(net) < 0.05) continue;
 
-    let rootFor: string, against: string, score: number;
-    if (h >= a) { rootFor = g.home; against = g.away; score = h; }
-    else        { rootFor = g.away; against = g.home; score = a; }
+      const score = Math.min(Math.abs(net) + sBonus, 1.0);
+      const helper = net > 0 ? g.home : g.away;  // team whose win helps abbr
+      const hurter = net > 0 ? g.away : g.home;  // team whose win hurts abbr
 
-    // Apply team-strength bonus (mirrors computeRecommendations)
-    if (score > 0) {
-      const hStr = loaded.teamStrengths[g.home]?.strengthScore ?? 0.5;
-      const aStr = loaded.teamStrengths[g.away]?.strengthScore ?? 0.5;
-      score = Math.min(score + 0.05 * (hStr + aStr) / 2, 1.0);
+      upsert({
+        id: `imp_${helper}_${abbr}`,
+        source: `urn:nfl:team:${helper}`,
+        target: `urn:nfl:team:${abbr}`,
+        type: "improvesOdds",
+        impactScore: score,
+        week: loaded.weekMeta.week,
+        gameId: g.id,
+        recommendationScore: Math.round(score * 100),
+        reasoning: `${helper} beating ${hurter} helps ${abbr}`,
+      });
+      upsert({
+        id: `hrt_${hurter}_${abbr}`,
+        source: `urn:nfl:team:${hurter}`,
+        target: `urn:nfl:team:${abbr}`,
+        type: "hurtsOdds",
+        impactScore: score,
+        week: loaded.weekMeta.week,
+        gameId: g.id,
+        recommendationScore: Math.round(score * 100),
+        reasoning: `${hurter} beating ${helper} hurts ${abbr}`,
+      });
     }
-
-    const reasoning =
-      buildReasoning(rootFor, against, fav, mode, score, loaded.teams, loaded)[0] ?? "";
-
-    edges.push({
-      id: `edge_${g.id}`,
-      source: `urn:nfl:team:${rootFor}`,
-      target: `urn:nfl:team:${against}`,
-      type: "improvesOdds",
-      impactScore: Math.max(score, 0.05),
-      week: loaded.weekMeta.week,
-      gameId: g.id,
-      recommendationScore: Math.round(score * 100),
-      reasoning,
-    });
   }
 
-  return edges;
+  return Array.from(edgeMap.values());
 }
 
 // ── winsOver edge builder ──────────────────────────────────────────────────────
@@ -272,9 +249,7 @@ function computeWinsOverEdges(
 
 export function buildGraphData(
   loaded: LoadedData,
-  favAbbr: string,
-  dislikes: string[] = [],
-  mode = "overall",
+  favAbbr = "",
 ): { ugm: UGM; graphData: GraphData } {
   const standings = computeStandings(loaded.teams);
   const wr = loaded.weekMeta.weeksRemaining;
@@ -285,9 +260,9 @@ export function buildGraphData(
     if (entry.seed === 1) oneSeedWins[entry.conf] = loaded.teams[abbr]?.record[0] ?? 0;
   }
 
-  // Collect all teams in current week + fav
-  const teamsInWeek = new Set<string>([favAbbr]);
-  for (const g of loaded.schedule) { teamsInWeek.add(g.home); teamsInWeek.add(g.away); }
+  // All known teams in the graph
+  const teamsInWeek = new Set<string>(Object.keys(loaded.teams));
+  if (favAbbr) teamsInWeek.add(favAbbr);
 
   // Build nodes
   const nodes: GraphNode[] = [];
@@ -305,7 +280,7 @@ export function buildGraphData(
       : "eliminated";
 
     const seed = standing?.seed ?? null;
-    const nodeLabel = abbr; // seed rendered inside circle via SVG background image
+    const nodeLabel = seed != null ? `#${seed} ${abbr}` : abbr;
     const isFavorite = abbr === favAbbr;
     const seed1W = oneSeedWins[t.conf] ?? 0;
     const is1SeedContender = t.record[0] + wr >= seed1W;
@@ -330,11 +305,10 @@ export function buildGraphData(
 
   // Build edges: playoff impact edges + head-to-head winsOver edges
   const edges = [
-    ...computePlayoffEdges(loaded, favAbbr, dislikes, mode),
+    ...computeAllPlayoffEdges(loaded),
     ...computeWinsOverEdges(loaded, teamsInWeek),
   ];
 
-  // Build UGM instance — no team colors or logos (copyright); use conference for styling
   const ugm = new UGM();
   for (const n of nodes) {
     ugm.addNode(n.id, {

@@ -57,64 +57,25 @@ function applyTeamPositions(cy: Core) {
   cy.fit(cy.elements(), 40);
 }
 
-// Apply seed number as an SVG background-image on seeded nodes.
-//
-// Glow (outline + shadow) lives in the stylesheet conference selectors —
-// stylesheet rules are applied reliably by Cytoscape's CSS engine on every
-// rebuild. Inline bypass styles (node.style) were tried but proved
-// unreliable for glow across cy rebuilds.
-//
-// background-fit/clip/position are in the base node stylesheet rule so
-// Cytoscape always centers the seed SVG correctly. Only background-image
-// needs to change per node because each seed number differs.
-function applyNodeStyles(cy: Core) {
-  cy.batch(() => {
-    cy.nodes().forEach(node => {
-      const seed = node.data("playoffSeed") as number | null;
-      if (seed != null) {
-        const svg = [
-          `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>`,
-          `<text x='50' y='50' dominant-baseline='central' text-anchor='middle'`,
-          ` fill='#ffffff' fill-opacity='0.95'`,
-          ` font-size='44' font-weight='900'`,
-          ` font-family='system-ui,-apple-system,Arial,sans-serif'>${seed}</text>`,
-          `</svg>`,
-        ].join("");
-        node.style("background-image",
-          "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
-      } else {
-        node.style("background-image", "none");
-      }
-    });
-  });
-}
-
 // ── Stylesheet ────────────────────────────────────────────────────────────────
 //
-// Seed text is rendered via SVG background-image (see applyNodeStyles).
-// Abbreviation appears below the node via text-valign: bottom.
+// nodeLabel (e.g. "#4 PIT") appears below the node via text-valign: bottom.
 // Edge labels suppressed — colored arrows + legend explain them.
 
 const PLAYOFF_GRAPH_STYLESHEET = [
-  // Base node: abbreviation BELOW the node; white text with dark outline.
-  // background-fit/clip/position center the seed SVG inside every node.
+  // Base node: nodeLabel ("#4 PIT") below the circle; white text with dark outline.
   {
     selector: "node",
     style: {
-      color:                   "#ffffff",
-      "font-size":             "10px",
-      "font-weight":           "bold",
-      "text-valign":           "bottom",
-      "text-halign":           "center",
-      "text-margin-y":         8,
-      "text-outline-color":    "#1f2937",
-      "text-outline-width":    1.5,
-      "text-outline-opacity":  0.75,
-      "background-width":      "100%",
-      "background-height":     "100%",
-      "background-clip":       "node",
-      "background-position-x": 0,
-      "background-position-y": 0,
+      color:                  "#ffffff",
+      "font-size":            "10px",
+      "font-weight":          "bold",
+      "text-valign":          "bottom",
+      "text-halign":          "center",
+      "text-margin-y":        8,
+      "text-outline-color":   "#1f2937",
+      "text-outline-width":   1.5,
+      "text-outline-opacity": 0.75,
     },
   },
   // Conference fallback colors + glow (outline ring + shadow blur)
@@ -164,10 +125,10 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       "border-style": "solid",
     },
   },
-  // Abbreviation label below the node
+  // nodeLabel below the node (e.g. "#4 PIT" or "PIT")
   {
-    selector: "node[abbreviation]",
-    style: { label: "data(abbreviation)" },
+    selector: "node[nodeLabel]",
+    style: { label: "data(nodeLabel)" },
   },
   // Size ← playoff probability (30–70 px)
   {
@@ -186,6 +147,10 @@ const PLAYOFF_GRAPH_STYLESHEET = [
   {
     selector: 'edge[type = "improvesOdds"]',
     style: { "line-color": "#38bdf8", "target-arrow-color": "#38bdf8" },
+  },
+  {
+    selector: 'edge[type = "hurtsOdds"]',
+    style: { "line-color": "#f97316", "target-arrow-color": "#f97316" },
   },
   {
     selector: 'edge[type = "winsOver"]',
@@ -228,7 +193,7 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     new Set(["division_leader", "wildcard", "in_hunt", "eliminated"]),
   );
   const [visibleEdgeTypes, setVisibleEdgeTypes] = useState(
-    new Set(["improvesOdds", "winsOver"]),
+    new Set(["improvesOdds", "hurtsOdds", "winsOver"]),
   );
   const [only1Seed, setOnly1Seed] = useState(false);
 
@@ -283,10 +248,8 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   const handleCanvasReady = useCallback(
     (cy: Core) => {
       cyRef.current = cy;
-      // Apply deterministic division layout + seed images after initial layout
-      cy.one("layoutstop", () => { applyTeamPositions(cy); applyNodeStyles(cy); });
-      // Also apply immediately for preset layout
-      setTimeout(() => { applyTeamPositions(cy); applyNodeStyles(cy); }, 0);
+      cy.one("layoutstop", () => { applyTeamPositions(cy); });
+      setTimeout(() => { applyTeamPositions(cy); }, 0);
 
       cy.on("tap", (evt) => {
         if (evt.target === cy) { selectNodes([]); selectEdges([]); }
@@ -301,7 +264,7 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    setTimeout(() => { applyTeamPositions(cy); applyNodeStyles(cy); }, 50);
+    setTimeout(() => { applyTeamPositions(cy); }, 50);
   }, [ugm]);
 
   // Apply filter visibility changes
@@ -504,6 +467,7 @@ const KIND_LABELS: { key: string; label: string }[] = [
 
 const EDGE_TYPE_LABELS: { key: string; label: string; color: string }[] = [
   { key: "improvesOdds", label: "Improves Odds", color: "#38bdf8" },
+  { key: "hurtsOdds",    label: "Hurts Odds",    color: "#f97316" },
   { key: "winsOver",     label: "Wins Over",     color: "#6b7280" },
 ];
 
@@ -605,8 +569,8 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
   const relatedEdges = graphData.edges.filter(
     e => e.source === node.id || e.target === node.id,
   );
-  const confColor = node.conference === "AFC" ? "#dc2626" : "#2563eb";
-  const seedBadgeColor = node.isFavorite ? "#f59e0b" : confColor;
+  const teamColor = node.color ? `#${node.color}` : (node.conference === "AFC" ? "#dc2626" : "#2563eb");
+  const seedBadgeColor = node.isFavorite ? "#f59e0b" : teamColor;
 
   return (
     <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)", fontSize: 13 }}>
@@ -614,7 +578,7 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
         <div
           style={{
             width: 36, height: 36, borderRadius: "50%",
-            background: confColor, color: "#fff",
+            background: teamColor, color: "#fff",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontWeight: 800, fontSize: 12, flexShrink: 0,
           }}
@@ -759,6 +723,7 @@ function ImpactChart({ graphData }: { graphData: GraphData }) {
           const y    = CHART_H - barH;
           const color =
             e.type === "improvesOdds" ? "#38bdf8"
+            : e.type === "hurtsOdds"  ? "#f97316"
             : e.type === "winsOver"   ? "#6b7280"
             : "#9ca3af";
           const lx   = x + BAR_W / 2;

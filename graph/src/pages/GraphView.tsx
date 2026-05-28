@@ -22,43 +22,6 @@ import type { AggregatedData } from "../lib/nfl-data";
 import { loadSeasonData, buildLoadedData } from "../lib/nfl-data";
 import { buildGraphData } from "../lib/ugm-builder";
 
-// ── Team list (alphabetical, with display name) ───────────────────────────────
-
-const ALL_TEAMS: { abbr: string; name: string }[] = [
-  { abbr: "ARI", name: "Arizona Cardinals" },
-  { abbr: "ATL", name: "Atlanta Falcons" },
-  { abbr: "BAL", name: "Baltimore Ravens" },
-  { abbr: "BUF", name: "Buffalo Bills" },
-  { abbr: "CAR", name: "Carolina Panthers" },
-  { abbr: "CHI", name: "Chicago Bears" },
-  { abbr: "CIN", name: "Cincinnati Bengals" },
-  { abbr: "CLE", name: "Cleveland Browns" },
-  { abbr: "DAL", name: "Dallas Cowboys" },
-  { abbr: "DEN", name: "Denver Broncos" },
-  { abbr: "DET", name: "Detroit Lions" },
-  { abbr: "GB",  name: "Green Bay Packers" },
-  { abbr: "HOU", name: "Houston Texans" },
-  { abbr: "IND", name: "Indianapolis Colts" },
-  { abbr: "JAX", name: "Jacksonville Jaguars" },
-  { abbr: "KC",  name: "Kansas City Chiefs" },
-  { abbr: "LAC", name: "LA Chargers" },
-  { abbr: "LAR", name: "LA Rams" },
-  { abbr: "LV",  name: "Las Vegas Raiders" },
-  { abbr: "MIA", name: "Miami Dolphins" },
-  { abbr: "MIN", name: "Minnesota Vikings" },
-  { abbr: "NE",  name: "New England Patriots" },
-  { abbr: "NO",  name: "New Orleans Saints" },
-  { abbr: "NYG", name: "NY Giants" },
-  { abbr: "NYJ", name: "NY Jets" },
-  { abbr: "PHI", name: "Philadelphia Eagles" },
-  { abbr: "PIT", name: "Pittsburgh Steelers" },
-  { abbr: "SEA", name: "Seattle Seahawks" },
-  { abbr: "SF",  name: "San Francisco 49ers" },
-  { abbr: "TB",  name: "Tampa Bay Buccaneers" },
-  { abbr: "TEN", name: "Tennessee Titans" },
-  { abbr: "WAS", name: "Washington Commanders" },
-];
-
 const WEEKS = Array.from({ length: 18 }, (_, i) => i + 1);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -81,7 +44,7 @@ type SeasonLoad =
   | { status: "ready" };
 
 export function GraphView() {
-  const [team, setTeam] = useState(getInitialTeam);
+  const [team] = useState(getInitialTeam);
   const [week, setWeek] = useState<number | null>(null); // null = current week
 
   const [seasonLoad, setSeasonLoad] = useState<SeasonLoad>({ status: "idle" });
@@ -152,25 +115,9 @@ export function GraphView() {
           <span style={pageStyles.brandSub}>· Graph View</span>
         </div>
 
-        {/* Center: team + week selectors in a pill container (like the tab bar) */}
+        {/* Center: week selector in a pill container (like the tab bar) */}
         <div style={pageStyles.selectorGroup}>
           <label style={pageStyles.selectorLabel}>
-            <span style={pageStyles.selectorLabelText}>Team</span>
-            <select
-              value={team}
-              onChange={(e) => setTeam(e.target.value)}
-              style={pageStyles.select}
-            >
-              {ALL_TEAMS.map((t) => (
-                <option key={t.abbr} value={t.abbr}>
-                  {t.abbr} — {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span style={pageStyles.selectorDivider} />
-          <label style={pageStyles.selectorLabel}>
-            <span style={pageStyles.selectorLabelText}>Week</span>
             <select
               value={week ?? ""}
               onChange={(e) => setWeek(e.target.value === "" ? null : Number(e.target.value))}
@@ -376,13 +323,6 @@ const pageStyles = {
     fontSize:   13,
     fontWeight: 500,
     color:      "var(--text-muted)",
-  },
-  selectorDivider: {
-    width:      1,
-    height:     16,
-    background: "var(--border)",
-    flexShrink: 0,
-    margin:     "0 2px",
   },
   select: {
     background:  "transparent",
