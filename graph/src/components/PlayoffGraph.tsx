@@ -291,6 +291,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
   const [legendPos, setLegendPos] = useState({ x: 10, y: 60 });
   const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
 
   function toggleConf(c: string) {
     setVisibleConfs(prev => {
@@ -347,18 +348,34 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
       setTimeout(() => { applyLayout(cy, layoutRef.current); }, 0);
 
       cy.on("tap", (evt) => {
-        if (evt.target === cy) { selectNodes([]); selectEdges([]); }
+        if (evt.target === cy) { selectNodes([]); selectEdges([]); setSelectedEdge(null); }
       });
-      cy.on("tap", "node", (evt) => selectNodes([evt.target.id()]));
-      cy.on("tap", "edge", (evt) => selectEdges([evt.target.id()]));
+      cy.on("tap", "node", (evt) => { selectNodes([evt.target.id()]); setSelectedEdge(null); });
+      cy.on("tap", "edge", (evt) => {
+        const e = evt.target;
+        selectNodes([]);
+        selectEdges([e.id()]);
+        setSelectedEdge({
+          id: e.id(),
+          source: e.source().id(),
+          target: e.target().id(),
+          type:   e.data("type") as GraphEdge["type"],
+          impactScore:         e.data("impactScore")         ?? 0,
+          week:                e.data("week")                ?? 0,
+          gameId:              e.data("gameId")              ?? "",
+          recommendationScore: e.data("recommendationScore") ?? 0,
+          reasoning:           e.data("reasoning")           ?? "",
+        });
+      });
     },
     [selectNodes, selectEdges],
   );
 
-  // Reapply layout when UGM updates (new nodes may lack positions)
+  // Reapply layout when UGM updates; also clear any stale edge selection
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
+    setSelectedEdge(null);
     setTimeout(() => { applyLayout(cy, layoutRef.current); }, 50);
   }, [ugm]);
 
@@ -393,12 +410,8 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
 
   // Selected element
   const firstNode = [...selectedNodeIds][0] ?? null;
-  const firstEdge = [...selectedEdgeIds][0] ?? null;
   const selectedNodeData = firstNode
     ? graphData.nodes.find(n => n.id === firstNode) ?? null
-    : null;
-  const selectedEdgeData = firstEdge
-    ? graphData.edges.find(e => e.id === firstEdge) ?? null
     : null;
 
   // Combined visibility + coloring effect.
@@ -411,6 +424,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
 
     cy.elements().removeStyle("display");
     cy.nodes().removeStyle("opacity");
+    cy.edges().removeStyle("opacity");
 
     // Hide filtered-out nodes
     const toHideNodes = cy.nodes().filter(node => {
@@ -459,7 +473,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         });
       }
     }
-    // Gray out nodes not connected to the selected node via visible edges
+    // Gray out nodes and edges not connected to the selected node
     if (firstNode) {
       const sel = cy.getElementById(firstNode);
       if (sel.length) {
@@ -468,8 +482,15 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
           e.style("display") !== "none" &&
           (e.source().id() === firstNode || e.target().id() === firstNode)
         ).forEach(e => { connectedIds.add(e.source().id()); connectedIds.add(e.target().id()); });
+        // Dim non-connected nodes (including their conf glow via opacity)
         cy.nodes().filter(n => n.style("display") !== "none" && !connectedIds.has(n.id()))
           .style("opacity", 0.15);
+        // Dim edges where both endpoints are non-connected
+        cy.edges().filter(e =>
+          e.style("display") !== "none" &&
+          !connectedIds.has(e.source().id()) &&
+          !connectedIds.has(e.target().id())
+        ).style("opacity", 0.1);
       }
     }
 
@@ -605,15 +626,15 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
           <div style={styles.inspectorHeader}>
             {selectedNodeData
               ? "Team Details"
-              : selectedEdgeData
+              : selectedEdge
                 ? "Game Details"
                 : "Click any team to view details"}
           </div>
           {selectedNodeData && (
             <TeamPanel node={selectedNodeData} graphData={graphData} />
           )}
-          {selectedEdgeData && !selectedNodeData && (
-            <EdgeDetail edge={selectedEdgeData} />
+          {selectedEdge && !selectedNodeData && (
+            <EdgeDetail edge={selectedEdge} />
           )}
         </div>
       </div>
@@ -1031,24 +1052,38 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
 // ── EdgeDetail ────────────────────────────────────────────────────────────────
 
 function EdgeDetail({ edge }: { edge: GraphEdge }) {
-  const rootFor = edge.source.split(":").pop() ?? "";
-  const against = edge.target.split(":").pop() ?? "";
-  const dotColor = edgeTypeColor(edge.type);
+  const src   = edge.source.split(":").pop() ?? "";
+  const tgt   = edge.target.split(":").pop() ?? "";
+  const color = edgeTypeColor(edge.type);
+
+  const headline =
+    edge.type === "winsOver"
+      ? `${src} defeated ${tgt}`
+      : edge.type === "improvesOdds"
+        ? `${src} winning improves ${tgt}'s odds`
+        : `${src} winning hurts ${tgt}'s odds`;
+
   return (
-    <div style={{ padding: "8px 12px", fontSize: 13 }}>
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>
-        <span style={{ color: dotColor }}>{rootFor}</span>
-        {edge.type === "winsOver" ? " beat " : " vs "}
-        {against}
+    <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)", fontSize: 13 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: color,
+          flexShrink: 0, marginTop: 3 }} />
+        <div style={{ fontWeight: 700, lineHeight: 1.35 }}>{headline}</div>
       </div>
-      {edge.type !== "winsOver" && (
-        <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>
-          Impact score: <strong>{edge.recommendationScore}</strong>
+      {edge.type === "winsOver" ? (
+        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>Week {edge.week}</div>
+      ) : (
+        edge.recommendationScore > 0 && (
+          <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 4 }}>
+            Impact: <strong style={{ color }}>{edge.recommendationScore}%</strong>
+          </div>
+        )
+      )}
+      {edge.reasoning && (
+        <div style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: 11, marginTop: 5 }}>
+          {edge.reasoning}
         </div>
       )}
-      <div style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: 11 }}>
-        {edge.reasoning || (edge.type === "winsOver" ? "Head-to-head result" : "No reasoning available")}
-      </div>
     </div>
   );
 }
@@ -1170,22 +1205,17 @@ function ImpactChart({ graphData, selectedNodeId, mode, onModeChange }: {
                 const label = (hasSelection && rootFor) ? rootFor : "";
                 return (
                   <g key={game.id}>
-                    {/* bar — outline makes dark-colored bars visible in dark mode */}
-                    <rect x={x} y={y} width={BAR_W} height={barH} fill={color} rx={3}
-                      stroke="rgba(128,128,128,0.25)" strokeWidth="1" />
+                    <rect x={x} y={y} width={BAR_W} height={barH} fill={color} rx={3} />
                     {pct && (
                       <text x={lx} y={y - 3} textAnchor="middle"
                         fontSize={8} fill="var(--text)">{pct}</text>
                     )}
                     {label && (
-                      <>
-                        {/* halo for readability against any background */}
-                        <text x={lx} y={ly} textAnchor="middle" fontSize={10} fontWeight="800"
-                          fill="none" stroke="rgba(128,128,128,0.4)" strokeWidth="4"
-                          strokeLinejoin="round">{label}</text>
-                        <text x={lx} y={ly} textAnchor="middle" fontSize={10} fontWeight="800"
-                          fill={color}>{label}</text>
-                      </>
+                      <text x={lx} y={ly} textAnchor="middle" fontSize={10} fontWeight="800"
+                        fill={color}
+                        style={{ filter: "drop-shadow(0 0 3px var(--surface)) drop-shadow(0 0 3px var(--surface))" }}>
+                        {label}
+                      </text>
                     )}
                   </g>
                 );
