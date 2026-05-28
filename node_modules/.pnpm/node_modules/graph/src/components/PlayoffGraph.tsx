@@ -649,22 +649,21 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
         </strong>
       </div>
 
-      {relatedEdges.length > 0 && (
+      <div style={{ marginBottom: 6, fontSize: 11, color: "var(--text-muted)" }}>
+        <span style={{ color: "#22c55e", fontWeight: 700 }}>↗ green arrows</span> = wins &nbsp;·&nbsp;
+        <span style={{ color: "#ef4444", fontWeight: 700 }}>↘ red arrows</span> = losses
+      </div>
+
+      {relatedEdges.filter(e => e.type !== "winsOver").length > 0 && (
         <>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            This week ({relatedEdges.length} game impacts):
+            This week ({relatedEdges.filter(e => e.type !== "winsOver").length} game impacts):
           </div>
-          {relatedEdges.slice(0, 6).map(e => {
+          {relatedEdges.filter(e => e.type !== "winsOver").slice(0, 6).map(e => {
             const isSource = e.source === node.id;
             const otherAbbr = (isSource ? e.target : e.source).split(":").pop() ?? "";
-            const dotColor =
-              e.type === "improvesOdds" ? "#38bdf8"
-              : e.type === "winsOver"   ? "#6b7280"
-              : "#9ca3af";
-            const edgeLabel =
-              e.type === "winsOver"
-                ? isSource ? `Beat ${otherAbbr}` : `Lost to ${otherAbbr}`
-                : isSource ? `Root for ${otherAbbr}` : `Against ${otherAbbr}`;
+            const dotColor = "#38bdf8";
+            const edgeLabel = isSource ? `Root for ${otherAbbr}` : `Against ${otherAbbr}`;
             return (
               <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
@@ -675,14 +674,14 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
               </div>
             );
           })}
-          {relatedEdges.length > 6 && (
+          {relatedEdges.filter(e => e.type !== "winsOver").length > 6 && (
             <div style={{ color: "var(--text-faint)", fontSize: 11, marginTop: 4 }}>
-              +{relatedEdges.length - 6} more
+              +{relatedEdges.filter(e => e.type !== "winsOver").length - 6} more
             </div>
           )}
-          {relatedEdges[0]?.reasoning && (
+          {relatedEdges.find(e => e.type !== "winsOver")?.reasoning && (
             <div style={{ marginTop: 6, color: "var(--text-muted)", fontStyle: "italic", fontSize: 11 }}>
-              {relatedEdges[0].reasoning}
+              {relatedEdges.find(e => e.type !== "winsOver")!.reasoning}
             </div>
           )}
         </>

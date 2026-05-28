@@ -248,7 +248,7 @@ function computeWinsOverEdges(
       if (!result.win) continue;
       if (!nodeIds.has(result.oppAbbr)) continue;
       const oppTeam = loaded.teams[result.oppAbbr];
-      if (!oppTeam || oppTeam.conf !== team.conf) continue;
+      if (!oppTeam) continue;
       const key = `${abbr}_${result.oppAbbr}`;
       if (seen.has(key)) continue;
       seen.add(key);
