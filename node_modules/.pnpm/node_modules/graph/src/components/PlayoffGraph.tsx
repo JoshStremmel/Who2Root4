@@ -185,7 +185,7 @@ const PLAYOFF_GRAPH_STYLESHEET = [
   // Edge colors
   {
     selector: 'edge[type = "improvesOdds"]',
-    style: { "line-color": "#22c55e", "target-arrow-color": "#22c55e" },
+    style: { "line-color": "#38bdf8", "target-arrow-color": "#38bdf8" },
   },
   {
     selector: 'edge[type = "winsOver"]',
@@ -333,6 +333,24 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   const selectedEdgeData = firstEdge
     ? graphData.edges.find(e => e.id === firstEdge) ?? null
     : null;
+
+  // Recolor winsOver edges for selected team: outgoing=green (win), incoming=red (loss)
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.edges('[type = "winsOver"]').removeStyle("line-color target-arrow-color");
+    if (firstNode) {
+      const node = cy.getElementById(firstNode);
+      if (node.length) {
+        node.outgoers('edge[type = "winsOver"]').style({
+          "line-color": "#22c55e", "target-arrow-color": "#22c55e",
+        });
+        node.incomers('edge[type = "winsOver"]').style({
+          "line-color": "#ef4444", "target-arrow-color": "#ef4444",
+        });
+      }
+    }
+  }, [firstNode]);
 
   // Responsive layout
   const [showChart, setShowChart] = useState(true);
@@ -485,7 +503,7 @@ const KIND_LABELS: { key: string; label: string }[] = [
 ];
 
 const EDGE_TYPE_LABELS: { key: string; label: string; color: string }[] = [
-  { key: "improvesOdds", label: "Improves Odds", color: "#22c55e" },
+  { key: "improvesOdds", label: "Improves Odds", color: "#38bdf8" },
   { key: "winsOver",     label: "Wins Over",     color: "#6b7280" },
 ];
 
@@ -640,7 +658,7 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
             const isSource = e.source === node.id;
             const otherAbbr = (isSource ? e.target : e.source).split(":").pop() ?? "";
             const dotColor =
-              e.type === "improvesOdds" ? "#22c55e"
+              e.type === "improvesOdds" ? "#38bdf8"
               : e.type === "winsOver"   ? "#6b7280"
               : "#9ca3af";
             const edgeLabel =
@@ -679,7 +697,7 @@ function EdgeDetail({ edge }: { edge: GraphEdge }) {
   const rootFor = edge.source.split(":").pop() ?? "";
   const against = edge.target.split(":").pop() ?? "";
   const dotColor =
-    edge.type === "improvesOdds" ? "#22c55e"
+    edge.type === "improvesOdds" ? "#38bdf8"
     : edge.type === "winsOver"   ? "#6b7280"
     : "#9ca3af";
   return (
@@ -741,7 +759,7 @@ function ImpactChart({ graphData }: { graphData: GraphData }) {
           const x    = GAP + i * (BAR_W + GAP);
           const y    = CHART_H - barH;
           const color =
-            e.type === "improvesOdds" ? "#22c55e"
+            e.type === "improvesOdds" ? "#38bdf8"
             : e.type === "winsOver"   ? "#6b7280"
             : "#9ca3af";
           const lx   = x + BAR_W / 2;
