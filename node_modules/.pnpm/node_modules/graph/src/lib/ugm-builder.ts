@@ -223,7 +223,7 @@ function computePlayoffEdges(
       impactScore: Math.max(score, 0.05),
       week: loaded.weekMeta.week,
       gameId: g.id,
-      recommendationScore: Math.round(score * 10),
+      recommendationScore: Math.round(score * 100),
       reasoning,
     });
   }

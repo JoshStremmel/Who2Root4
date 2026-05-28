@@ -669,7 +669,7 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
                 <span style={{ flex: 1 }}>{edgeLabel}</span>
                 {e.recommendationScore > 0 && (
-                  <span style={{ fontWeight: 700, color: dotColor, fontSize: 12 }}>{e.recommendationScore}</span>
+                  <span style={{ fontWeight: 700, color: dotColor, fontSize: 12 }}>{e.recommendationScore}%</span>
                 )}
               </div>
             );
@@ -748,7 +748,7 @@ function ImpactChart({ graphData }: { graphData: GraphData }) {
   return (
     <div style={{ padding: "6px 12px 4px", overflowX: "auto" }}>
       <div style={{ fontWeight: 700, fontSize: 11, marginBottom: 4, color: "var(--text-muted)", letterSpacing: "0.04em" }}>
-        THIS WEEK'S GAME IMPACT SCORES
+        THIS WEEK'S GAME IMPACT
       </div>
       <svg width={svgW} height={svgH} style={{ display: "block" }}>
         {edges.map((e, i) => {
@@ -767,7 +767,7 @@ function ImpactChart({ graphData }: { graphData: GraphData }) {
             <g key={e.id}>
               <rect x={x} y={y} width={BAR_W} height={barH} fill={color} rx={3} />
               <text x={lx} y={CHART_H - barH - 3} textAnchor="middle" fontSize={8} fill="var(--text)">
-                {e.recommendationScore}
+                {e.recommendationScore}%
               </text>
               {/* X-axis label: "ROOT vs OPP", rotated 40° */}
               <text

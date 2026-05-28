@@ -144,13 +144,14 @@ export function GraphView() {
     <div style={pageStyles.root}>
       {/* Top nav bar */}
       <header style={pageStyles.header}>
-        <a href="../" style={pageStyles.backLink} title="Back to main app" aria-label="Back">
-          ← Back
-        </a>
-        <span style={pageStyles.title}>
-          Who2Root4<sup style={{ fontSize: "0.5em" }}>TM</sup>
-          <span style={pageStyles.subtitle}> · Graph View</span>
-        </span>
+        {/* Brand */}
+        <div style={pageStyles.brand}>
+          <span style={pageStyles.brandMark}>W</span>
+          <span style={pageStyles.brandWord}>
+            Who2Root4<sup className="w2r4-tm">TM</sup>
+          </span>
+          <span style={pageStyles.brandSub}> · Graph View</span>
+        </div>
 
         {/* Team selector */}
         <label style={pageStyles.label}>
@@ -187,14 +188,29 @@ export function GraphView() {
           {season} season
         </span>
 
-        {/* Dark mode toggle */}
-        <button
-          onClick={toggleTheme}
-          title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-          style={pageStyles.themeBtn}
-        >
-          {isDark ? "☀️" : "🌙"}
-        </button>
+        {/* Back link + dark mode toggle (right side) */}
+        <div style={pageStyles.navRight}>
+          <a href="../" style={pageStyles.backLink} title="Back to main app" aria-label="Back">
+            ← Main
+          </a>
+          <button
+            onClick={toggleTheme}
+            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            style={pageStyles.themeBtn}
+            aria-label="Toggle theme"
+          >
+            {isDark ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
+          </button>
+        </div>
       </header>
 
       {/* Preseason banner */}
@@ -290,38 +306,71 @@ const pageStyles = {
     fontFamily:    "var(--font-data)",
   },
   header: {
-    display:      "flex",
-    alignItems:   "center",
-    gap:          12,
-    height:       56,
-    padding:      "0 16px",
-    borderBottom: "1px solid var(--border)",
-    background:   "var(--surface)",
+    position:              "sticky" as const,
+    top:                   0,
+    zIndex:                30,
+    display:               "flex",
+    alignItems:            "center",
+    gap:                   14,
+    height:                56,
+    padding:               "0 28px",
+    borderBottom:          "1px solid var(--border)",
+    background:            "color-mix(in oklch, var(--bg) 78%, transparent)",
+    backdropFilter:        "saturate(180%) blur(18px)",
+    WebkitBackdropFilter:  "saturate(180%) blur(18px)",
+    flexShrink:            0,
+    flexWrap:              "wrap" as const,
+  },
+  brand: {
+    display:    "flex",
+    alignItems: "center",
+    gap:        8,
+  },
+  brandMark: {
+    width:        28,
+    height:       28,
+    borderRadius: 7,
+    background:   "var(--accent)",
+    display:      "grid",
+    placeItems:   "center",
+    color:        "white",
+    fontFamily:   "var(--font-display)",
+    fontWeight:   800,
+    fontSize:     14,
+    letterSpacing: "0.02em",
     flexShrink:   0,
-    flexWrap:     "wrap" as const,
+  },
+  brandWord: {
+    fontFamily:    "var(--font-heading)",
+    fontWeight:    700,
+    fontSize:      20,
+    letterSpacing: "-0.01em",
+    color:         "var(--text)",
+  },
+  brandSub: {
+    fontFamily:    "var(--font-data)",
+    fontWeight:    400,
+    fontSize:      13,
+    color:         "var(--text-faint)",
+    letterSpacing: 0,
+    opacity:       0.85,
+  },
+  navRight: {
+    marginLeft:  "auto",
+    display:     "flex",
+    alignItems:  "center",
+    gap:         8,
   },
   backLink: {
     color:          "var(--text-muted)",
     textDecoration: "none",
     fontSize:       13,
     fontWeight:     600,
-    padding:        "4px 8px",
-    borderRadius:   6,
+    padding:        "5px 10px",
+    borderRadius:   999,
     border:         "1px solid var(--border)",
-  },
-  title: {
-    fontFamily:    "var(--font-display)",
-    fontWeight:    800,
-    fontSize:      22,
-    letterSpacing: "-0.5px",
-    color:         "var(--text)",
-  },
-  subtitle: {
-    fontFamily:    "var(--font-data)",
-    fontWeight:    400,
-    fontSize:      14,
-    color:         "var(--text-faint)",
-    letterSpacing: 0,
+    background:     "var(--surface)",
+    whiteSpace:     "nowrap" as const,
   },
   label: {
     display:    "flex",
@@ -332,8 +381,8 @@ const pageStyles = {
     color:      "var(--text-muted)",
   },
   select: {
-    padding:      "4px 8px",
-    borderRadius: 6,
+    padding:      "5px 8px",
+    borderRadius: 8,
     border:       "1px solid var(--border)",
     background:   "var(--surface)",
     color:        "var(--text)",
@@ -341,14 +390,16 @@ const pageStyles = {
     fontFamily:   "var(--font-data)",
   },
   themeBtn: {
-    padding:      "4px 8px",
-    borderRadius: 6,
+    display:      "grid",
+    placeItems:   "center",
+    width:        32,
+    height:       32,
+    padding:      0,
+    borderRadius: 8,
     border:       "1px solid var(--border)",
-    background:   "var(--surface)",
+    background:   "transparent",
     cursor:       "pointer",
-    fontSize:     16,
-    lineHeight:   1,
-    marginLeft:   "auto",
+    color:        "var(--text-muted)",
   },
   preseasonBanner: {
     background:   "oklch(0.96 0.045 60)",
