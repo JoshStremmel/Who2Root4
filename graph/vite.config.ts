@@ -6,7 +6,7 @@ const g3Root = resolve(__dirname, "../g3-toolkit/packages");
 
 export default defineConfig({
   plugins: [react()],
-  base: "/Who2Root4/graph/",
+  base: "/",
   resolve: {
     alias: [
       // CSS and the controls→interaction naming mismatch must be before the @g3t/react catch-all
