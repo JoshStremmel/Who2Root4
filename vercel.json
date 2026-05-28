@@ -1,5 +1,9 @@
 {
-  "buildCommand": "pnpm --filter graph build",
-  "outputDirectory": "graph/dist",
-  "installCommand": "git submodule update --init --recursive && pnpm install"
+  "buildCommand": "pnpm --filter graph build && mkdir -p dist && cp index.html dist/ && cp -r src dist/",
+  "outputDirectory": "dist",
+  "installCommand": "git submodule update --init --recursive && pnpm install",
+  "rewrites": [
+    { "source": "/graph/(.*)", "destination": "/graph/index.html" },
+    { "source": "/graph", "destination": "/graph/index.html" }
+  ]
 }

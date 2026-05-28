@@ -210,7 +210,7 @@ export function GraphView() {
         {/* Right: season + back link + theme toggle */}
         <div style={pageStyles.navRight}>
           <span style={pageStyles.seasonText}>{season} season</span>
-          <a href="../" style={pageStyles.backLink} title="Back to main app" aria-label="Back">
+          <a href="/" style={pageStyles.backLink} title="Back to main app" aria-label="Back">
             ← Main
           </a>
           <button
