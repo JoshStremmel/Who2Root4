@@ -74,6 +74,7 @@ export function GraphView() {
     const dark = getTweakPref("theme", "light") === "dark";
     setIsDark(dark);
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
     setTheme(dark ? "dark" : "light");
   }, [setTheme]);
 
@@ -82,6 +83,7 @@ export function GraphView() {
     setIsDark(next);
     const theme = next ? "dark" : "light";
     document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.style.colorScheme = theme;
     setTheme(theme);
     saveTweakPref("theme", theme);
   }, [isDark, setTheme]);
@@ -140,7 +142,7 @@ export function GraphView() {
             <select
               value={week ?? ""}
               onChange={(e) => handleWeekChange(e.target.value === "" ? null : Number(e.target.value))}
-              style={{ ...pageStyles.select, colorScheme: isDark ? "dark" : "light" } as React.CSSProperties}
+              style={{ ...pageStyles.select, colorScheme: "inherit" } as React.CSSProperties}
             >
               <option value="">Current</option>
               {WEEKS.map((w) => (

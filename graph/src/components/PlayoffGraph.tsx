@@ -492,12 +492,11 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         // Dim non-connected nodes (including their conf glow via opacity)
         cy.nodes().filter(n => !connectedIds.has(n.id()))
           .style("opacity", 0.15);
-        // Dim edges where both endpoints are non-connected
-        // (no display check — setting opacity on hidden edges is harmless)
+        // Dim edges where both endpoints are non-connected (same opacity as nodes)
         cy.edges().filter(e =>
           !connectedIds.has(e.source().id()) &&
           !connectedIds.has(e.target().id())
-        ).style("opacity", 0.1);
+        ).style("opacity", 0.15);
       }
     }
 
