@@ -21,7 +21,7 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  type: "improvesOdds" | "hurtsOdds" | "winsOver";
+  type: "improvesOdds" | "hurtsOdds" | "neutral" | "winsOver";
   impactScore: number;
   week: number;
   gameId: string;

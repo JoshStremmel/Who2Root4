@@ -153,6 +153,10 @@ const PLAYOFF_GRAPH_STYLESHEET = [
     style: { "line-color": "#f97316", "target-arrow-color": "#f97316" },
   },
   {
+    selector: 'edge[type = "neutral"]',
+    style: { "line-color": "#1e3a8a", "target-arrow-color": "#1e3a8a" },
+  },
+  {
     selector: 'edge[type = "winsOver"]',
     style: { "line-color": "#6b7280", "target-arrow-color": "#6b7280" },
   },
@@ -304,11 +308,11 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     }
 
     // improvesOdds/hurtsOdds: always hidden globally; reveal per direction toggle
-    cy.edges('[type = "improvesOdds"],[type = "hurtsOdds"]').style("display", "none");
+    cy.edges('[type = "improvesOdds"],[type = "hurtsOdds"],[type = "neutral"]').style("display", "none");
     if (firstNode) {
       const sel = cy.getElementById(firstNode);
       if (sel.length) {
-        const oddsSelector = '[type = "improvesOdds"],[type = "hurtsOdds"]';
+        const oddsSelector = '[type = "improvesOdds"],[type = "hurtsOdds"],[type = "neutral"]';
         if (showImpactsOnTeam) {
           sel.incomers(oddsSelector).style("display", "element");
         }
@@ -463,6 +467,7 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
             </div>
             <div style={styles.legendPanel}>
               <CanvasLegend ugm={ugm} encoding={LEGEND_ENCODING} />
+              <EdgeTypeLegend />
             </div>
           </div>
         </div>
@@ -595,6 +600,77 @@ const chipStyles = {
   } as const,
 };
 
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+function edgeTypeColor(type: string): string {
+  if (type === "improvesOdds") return "#38bdf8";
+  if (type === "hurtsOdds")    return "#f97316";
+  if (type === "neutral")      return "#1e3a8a";
+  if (type === "winsOver")     return "#6b7280";
+  return "#9ca3af";
+}
+
+// ── CollapsibleSection ────────────────────────────────────────────────────────
+
+function CollapsibleSection({ title, count, children }: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ borderTop: "1px solid var(--border)" }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center",
+          justifyContent: "space-between", padding: "6px 0",
+          background: "none", border: "none", cursor: "pointer",
+          fontSize: 12, fontWeight: 600, color: "var(--text-muted)",
+          fontFamily: "var(--font-data)", textAlign: "left",
+        }}
+      >
+        <span>
+          {title}{" "}
+          <span style={{ opacity: 0.6, fontWeight: 400 }}>({count})</span>
+        </span>
+        <span style={{ fontSize: 10, opacity: 0.6 }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div style={{ maxHeight: 220, overflowY: "auto", paddingBottom: 6 }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── EdgeTypeLegend ────────────────────────────────────────────────────────────
+
+function EdgeTypeLegend() {
+  const items = [
+    { color: "#38bdf8", label: "Improves Odds" },
+    { color: "#f97316", label: "Hurts Odds"    },
+    { color: "#1e3a8a", label: "Neutral"        },
+    { color: "#22c55e", label: "Win (selected)" },
+    { color: "#ef4444", label: "Loss (selected)"},
+    { color: "#6b7280", label: "Wins Over"      },
+  ];
+  return (
+    <div style={{ paddingTop: 8, marginTop: 8, borderTop: "1px solid var(--border)", fontSize: 11 }}>
+      <div style={{ fontWeight: 700, color: "var(--text-muted)", marginBottom: 5, letterSpacing: "0.04em" }}>
+        EDGE TYPES
+      </div>
+      {items.map(({ color, label }) => (
+        <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+          <div style={{ width: 18, height: 2.5, background: color, flexShrink: 0, borderRadius: 1 }} />
+          <span style={{ color: "var(--text-muted)" }}>{label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── TeamPanel ─────────────────────────────────────────────────────────────────
 
 interface TeamPanelProps {
@@ -603,23 +679,38 @@ interface TeamPanelProps {
 }
 
 function TeamPanel({ node, graphData }: TeamPanelProps) {
-  const relatedEdges = graphData.edges.filter(
-    e => e.source === node.id || e.target === node.id,
-  );
   const teamColor = node.color ? `#${node.color}` : (node.conference === "AFC" ? "#dc2626" : "#2563eb");
   const seedBadgeColor = node.isFavorite ? "#f59e0b" : teamColor;
 
+  const wins = graphData.edges
+    .filter(e => e.type === "winsOver" && e.source === node.id)
+    .sort((a, b) => a.week - b.week);
+  const losses = graphData.edges
+    .filter(e => e.type === "winsOver" && e.target === node.id)
+    .sort((a, b) => a.week - b.week);
+  const wlItems = [
+    ...wins.map(e => ({ isWin: true,  opp: e.target.split(":").pop()!, week: e.week })),
+    ...losses.map(e => ({ isWin: false, opp: e.source.split(":").pop()!, week: e.week })),
+  ].sort((a, b) => a.week - b.week);
+
+  const impactsOnTeam = graphData.edges
+    .filter(e => e.target === node.id && e.type !== "winsOver")
+    .sort((a, b) => b.recommendationScore - a.recommendationScore);
+
+  const teamImpacts = graphData.edges
+    .filter(e => e.source === node.id && e.type !== "winsOver")
+    .sort((a, b) => b.recommendationScore - a.recommendationScore);
+
   return (
     <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)", fontSize: 13 }}>
+      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <div
-          style={{
-            width: 36, height: 36, borderRadius: "50%",
-            background: teamColor, color: "#fff",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontWeight: 800, fontSize: 12, flexShrink: 0,
-          }}
-        >
+        <div style={{
+          width: 36, height: 36, borderRadius: "50%",
+          background: teamColor, color: "#fff",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontWeight: 800, fontSize: 12, flexShrink: 0,
+        }}>
           {node.abbreviation}
         </div>
         <div>
@@ -643,50 +734,79 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
         <span style={{ color: "var(--text-muted)" }}>Playoff probability: </span>
         <strong>{Math.round(node.playoffProbability * 100)}%</strong>
       </div>
-      <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 6 }}>
         <span style={{ color: "var(--text-muted)" }}>Status: </span>
         <strong style={{ textTransform: "capitalize" }}>
           {node.standingKind.replace("_", " ")}
         </strong>
       </div>
 
-      <div style={{ marginBottom: 6, fontSize: 11, color: "var(--text-muted)" }}>
-        <span style={{ color: "#22c55e", fontWeight: 700 }}>↗ green arrows</span> = wins &nbsp;·&nbsp;
-        <span style={{ color: "#ef4444", fontWeight: 700 }}>↘ red arrows</span> = losses
-      </div>
-
-      {relatedEdges.filter(e => e.type !== "winsOver").length > 0 && (
-        <>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            This week ({relatedEdges.filter(e => e.type !== "winsOver").length} game impacts):
+      {/* Wins & Losses */}
+      <CollapsibleSection title="Wins &amp; Losses" count={wlItems.length}>
+        {wlItems.length === 0 ? (
+          <div style={{ color: "var(--text-faint)", fontSize: 11 }}>No results yet</div>
+        ) : wlItems.map((item, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6,
+            padding: "3px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+            <span style={{ color: item.isWin ? "#22c55e" : "#ef4444",
+              fontWeight: 700, fontSize: 11, width: 12 }}>
+              {item.isWin ? "W" : "L"}
+            </span>
+            <span style={{ flex: 1 }}>
+              {item.isWin ? "Beat" : "Lost to"} <strong>{item.opp}</strong>
+            </span>
+            <span style={{ color: "var(--text-faint)", fontSize: 11 }}>Wk {item.week}</span>
           </div>
-          {relatedEdges.filter(e => e.type !== "winsOver").slice(0, 6).map(e => {
-            const isSource = e.source === node.id;
-            const otherAbbr = (isSource ? e.target : e.source).split(":").pop() ?? "";
-            const dotColor = "#38bdf8";
-            const edgeLabel = isSource ? `Root for ${otherAbbr}` : `Against ${otherAbbr}`;
-            return (
-              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
-                <span style={{ flex: 1 }}>{edgeLabel}</span>
-                {e.recommendationScore > 0 && (
-                  <span style={{ fontWeight: 700, color: dotColor, fontSize: 12 }}>{e.recommendationScore}%</span>
-                )}
-              </div>
-            );
-          })}
-          {relatedEdges.filter(e => e.type !== "winsOver").length > 6 && (
-            <div style={{ color: "var(--text-faint)", fontSize: 11, marginTop: 4 }}>
-              +{relatedEdges.filter(e => e.type !== "winsOver").length - 6} more
+        ))}
+      </CollapsibleSection>
+
+      {/* Impacts on this team */}
+      <CollapsibleSection title="Impacts on Team" count={impactsOnTeam.length}>
+        {impactsOnTeam.length === 0 ? (
+          <div style={{ color: "var(--text-faint)", fontSize: 11 }}>No impacts this week</div>
+        ) : impactsOnTeam.map(e => {
+          const color = edgeTypeColor(e.type);
+          return (
+            <div key={e.id} style={{ display: "flex", alignItems: "flex-start", gap: 6,
+              padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: color,
+                flexShrink: 0, marginTop: 2 }} />
+              <span style={{ flex: 1, color: "var(--text-muted)", lineHeight: 1.4 }}>
+                {e.reasoning}
+              </span>
+              {e.recommendationScore > 0 && (
+                <span style={{ fontWeight: 700, color, fontSize: 11, flexShrink: 0 }}>
+                  {e.recommendationScore}%
+                </span>
+              )}
             </div>
-          )}
-          {relatedEdges.find(e => e.type !== "winsOver")?.reasoning && (
-            <div style={{ marginTop: 6, color: "var(--text-muted)", fontStyle: "italic", fontSize: 11 }}>
-              {relatedEdges.find(e => e.type !== "winsOver")!.reasoning}
+          );
+        })}
+      </CollapsibleSection>
+
+      {/* This team's impacts on others */}
+      <CollapsibleSection title="Team's Impacts" count={teamImpacts.length}>
+        {teamImpacts.length === 0 ? (
+          <div style={{ color: "var(--text-faint)", fontSize: 11 }}>No outgoing impacts this week</div>
+        ) : teamImpacts.map(e => {
+          const color = edgeTypeColor(e.type);
+          return (
+            <div key={e.id} style={{ display: "flex", alignItems: "flex-start", gap: 6,
+              padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: color,
+                flexShrink: 0, marginTop: 2 }} />
+              <span style={{ flex: 1, color: "var(--text-muted)", lineHeight: 1.4 }}>
+                {e.reasoning}
+              </span>
+              {e.recommendationScore > 0 && (
+                <span style={{ fontWeight: 700, color, fontSize: 11, flexShrink: 0 }}>
+                  {e.recommendationScore}%
+                </span>
+              )}
             </div>
-          )}
-        </>
-      )}
+          );
+        })}
+      </CollapsibleSection>
     </div>
   );
 }
@@ -696,10 +816,7 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
 function EdgeDetail({ edge }: { edge: GraphEdge }) {
   const rootFor = edge.source.split(":").pop() ?? "";
   const against = edge.target.split(":").pop() ?? "";
-  const dotColor =
-    edge.type === "improvesOdds" ? "#38bdf8"
-    : edge.type === "winsOver"   ? "#6b7280"
-    : "#9ca3af";
+  const dotColor = edgeTypeColor(edge.type);
   return (
     <div style={{ padding: "8px 12px", fontSize: 13 }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>
@@ -758,11 +875,7 @@ function ImpactChart({ graphData }: { graphData: GraphData }) {
           const barH = Math.max(4, (e.recommendationScore / maxScore) * CHART_H);
           const x    = GAP + i * (BAR_W + GAP);
           const y    = CHART_H - barH;
-          const color =
-            e.type === "improvesOdds" ? "#38bdf8"
-            : e.type === "hurtsOdds"  ? "#f97316"
-            : e.type === "winsOver"   ? "#6b7280"
-            : "#9ca3af";
+          const color = edgeTypeColor(e.type);
           const lx   = x + BAR_W / 2;
           const ly   = CHART_H + 10;
           return (

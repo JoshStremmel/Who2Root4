@@ -174,7 +174,26 @@ function computeAllPlayoffEdges(loaded: LoadedData): GraphEdge[] {
       const homeHelps = modeScore(g.home, g.away, fav, mode, dislikes, loaded.teams, loaded);
       const awayHelps = modeScore(g.away, g.home, fav, mode, dislikes, loaded.teams, loaded);
       const net = homeHelps - awayHelps;
-      if (Math.abs(net) < 0.05) continue;
+
+      if (Math.abs(net) < 0.05) {
+        // Both teams are roughly equal rivals — neutral impact.
+        const maxHelp = Math.max(homeHelps, awayHelps);
+        if (maxHelp >= 0.15) {
+          const score = Math.min(maxHelp + sBonus, 1.0);
+          upsert({
+            id: `neu_${g.id}_${abbr}`,
+            source: `urn:nfl:team:${g.home}`,
+            target: `urn:nfl:team:${abbr}`,
+            type: "neutral",
+            impactScore: score,
+            week: loaded.weekMeta.week,
+            gameId: g.id,
+            recommendationScore: Math.round(score * 100),
+            reasoning: `${g.home} vs ${g.away}: balanced impact on ${abbr}`,
+          });
+        }
+        continue;
+      }
 
       const score = Math.min(Math.abs(net) + sBonus, 1.0);
       const helper = net > 0 ? g.home : g.away;  // team whose win helps abbr
