@@ -59,11 +59,12 @@ function applyTeamPositions(cy: Core) {
   cy.fit(cy.elements(), 40);
 }
 
-// Current Standings: seeds stacked vertically per conference, unseed below
+// Current Standings: seeds stacked with a gentle outward arc to reduce edge overlap
 function applyStandingsLayout(cy: Core) {
   cy.batch(() => {
     for (const conf of ["AFC", "NFC"] as const) {
-      const x = conf === "AFC" ? 220 : 780;
+      const baseX    = conf === "AFC" ? 220 : 780;
+      const curveSide = conf === "AFC" ? -1 : 1;  // AFC curves left, NFC curves right
       const nodes = cy.nodes(`[conference = "${conf}"]`).sort((a, b) => {
         const sa = a.data("playoffSeed") as number | null;
         const sb = b.data("playoffSeed") as number | null;
@@ -72,7 +73,12 @@ function applyStandingsLayout(cy: Core) {
         if (sb == null) return -1;
         return sa - sb;
       });
-      nodes.forEach((n, i) => n.position({ x, y: 80 + i * 105 }));
+      const total = nodes.length;
+      nodes.forEach((n, i) => {
+        const t = total > 1 ? i / (total - 1) : 0.5;
+        const curve = Math.sin(t * Math.PI) * 90 * curveSide;
+        n.position({ x: baseX + curve, y: 80 + i * 105 });
+      });
     }
   });
   cy.fit(cy.elements(), 40);
@@ -404,6 +410,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
     if (!cy) return;
 
     cy.elements().removeStyle("display");
+    cy.nodes().removeStyle("opacity");
 
     // Hide filtered-out nodes
     const toHideNodes = cy.nodes().filter(node => {
@@ -452,13 +459,31 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         });
       }
     }
+    // Gray out nodes not connected to the selected node via visible edges
+    if (firstNode) {
+      const sel = cy.getElementById(firstNode);
+      if (sel.length) {
+        const connectedIds = new Set<string>([firstNode]);
+        cy.edges().filter(e =>
+          e.style("display") !== "none" &&
+          (e.source().id() === firstNode || e.target().id() === firstNode)
+        ).forEach(e => { connectedIds.add(e.source().id()); connectedIds.add(e.target().id()); });
+        cy.nodes().filter(n => n.style("display") !== "none" && !connectedIds.has(n.id()))
+          .style("opacity", 0.15);
+      }
+    }
+
     // Edge labels
     cy.edges().style("label", "");
     if (showEdgeLabels) {
       cy.edges('[type = "improvesOdds"]').style("label", "Improves Odds");
       cy.edges('[type = "hurtsOdds"]').style("label", "Hurts Odds");
       if (firstNode) {
-        cy.edges('[type = "winsOver"]').style("label", "Beat");
+        const sel = cy.getElementById(firstNode);
+        if (sel.length) {
+          sel.outgoers('edge[type = "winsOver"]').style("label", "Defeated");
+          sel.incomers('edge[type = "winsOver"]').style("label", "Defeated");
+        }
       }
     }
   }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, firstNode, ugm,
@@ -533,6 +558,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
               ...styles.recentreBtn,
               padding: "4px 8px",
               appearance: "auto" as unknown as undefined,
+              colorScheme: "inherit" as React.CSSProperties["colorScheme"],
             }}
           >
             <option value="default">Default</option>
@@ -690,7 +716,7 @@ function GraphFilter({
           Impacts on Team
         </FilterChip>
         <FilterChip active={showTeamImpactOnOthers} onClick={onToggleTeamImpactOnOthers} color="#0891b2">
-          Team&apos;s Impact
+          Impacts on Others
         </FilterChip>
         <span style={{ ...chipStyles.divider }} />
         <FilterChip active={showEdgeLabels} onClick={onToggleEdgeLabels} color="#64748b">
@@ -1055,10 +1081,8 @@ function ImpactChart({ graphData, selectedNodeId, mode, onModeChange }: {
     graphData.nodes.map(n => [n.abbreviation, n.color ? `#${n.color}` : "#6b7280"])
   );
 
-  const favId = graphData.meta.favoriteTeam
-    ? `urn:nfl:team:${graphData.meta.favoriteTeam}`
-    : null;
-  const effectiveId   = selectedNodeId ?? favId;
+  // Only use selected node — no fallback to favorite team
+  const effectiveId   = selectedNodeId;
   const effectiveAbbr = effectiveId?.split(":").pop() ?? null;
 
   const gameImpacts = [...graphData.games].map(game => {
@@ -1120,9 +1144,10 @@ function ImpactChart({ graphData, selectedNodeId, mode, onModeChange }: {
         <div style={{ fontWeight: 700, fontSize: 11, marginBottom: 3,
           color: "var(--text-muted)", letterSpacing: "0.04em", flexShrink: 0 }}>
           THIS WEEK&apos;S GAME IMPACT
-          {effectiveAbbr && (
-            <span style={{ fontWeight: 400, opacity: 0.65 }}> · {effectiveAbbr}</span>
-          )}
+          {effectiveAbbr
+            ? <span style={{ fontWeight: 400, opacity: 0.65 }}> · {effectiveAbbr}</span>
+            : <span style={{ fontWeight: 400, opacity: 0.45 }}> · select a team</span>
+          }
         </div>
         {gameImpacts.length === 0 ? (
           <div style={{ color: "var(--text-faint)", fontSize: 11, padding: 8 }}>
@@ -1132,26 +1157,36 @@ function ImpactChart({ graphData, selectedNodeId, mode, onModeChange }: {
           <div style={{ overflowX: "auto", overflowY: "hidden", flex: 1 }}>
             <svg width={svgW} height={svgH} style={{ display: "block" }}>
               {gameImpacts.map(({ game, rootFor, score }, i) => {
-                const barH  = Math.max(4, (score / maxScore) * CHART_H);
+                const hasSelection = effectiveId != null;
+                const barH  = hasSelection ? Math.max(4, (score / maxScore) * CHART_H) : 6;
                 const x     = GAP + i * (BAR_W + GAP);
                 const y     = CHART_H - barH;
                 const lx    = x + BAR_W / 2;
-                const ly    = CHART_H + 8;
-                // Use team's brand color; gray when no impact
-                const color = rootFor
+                const ly    = CHART_H + 11;
+                const color = (hasSelection && rootFor)
                   ? (teamColorMap.get(rootFor) ?? "#6b7280")
                   : "#4b5563";
-                const pct   = score > 0.005 ? `${Math.round(score * 100)}%` : "";
-                const label = rootFor ?? "—";
+                const pct   = (hasSelection && score > 0.005) ? `${Math.round(score * 100)}%` : "";
+                const label = (hasSelection && rootFor) ? rootFor : "";
                 return (
                   <g key={game.id}>
-                    <rect x={x} y={y} width={BAR_W} height={barH} fill={color} rx={3} />
+                    {/* bar — outline makes dark-colored bars visible in dark mode */}
+                    <rect x={x} y={y} width={BAR_W} height={barH} fill={color} rx={3}
+                      stroke="rgba(128,128,128,0.25)" strokeWidth="1" />
                     {pct && (
                       <text x={lx} y={y - 3} textAnchor="middle"
                         fontSize={8} fill="var(--text)">{pct}</text>
                     )}
-                    <text x={lx} y={ly} textAnchor="middle"
-                      fontSize={10} fontWeight="700" fill={color}>{label}</text>
+                    {label && (
+                      <>
+                        {/* halo for readability against any background */}
+                        <text x={lx} y={ly} textAnchor="middle" fontSize={10} fontWeight="800"
+                          fill="none" stroke="rgba(128,128,128,0.4)" strokeWidth="4"
+                          strokeLinejoin="round">{label}</text>
+                        <text x={lx} y={ly} textAnchor="middle" fontSize={10} fontWeight="800"
+                          fill={color}>{label}</text>
+                      </>
+                    )}
                   </g>
                 );
               })}

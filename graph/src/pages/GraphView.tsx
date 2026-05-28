@@ -140,7 +140,7 @@ export function GraphView() {
             <select
               value={week ?? ""}
               onChange={(e) => handleWeekChange(e.target.value === "" ? null : Number(e.target.value))}
-              style={pageStyles.select}
+              style={{ ...pageStyles.select, colorScheme: isDark ? "dark" : "light" } as React.CSSProperties}
             >
               <option value="">Current</option>
               {WEEKS.map((w) => (
