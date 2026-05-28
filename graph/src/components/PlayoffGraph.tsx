@@ -194,6 +194,8 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   );
   const [visibleEdgeTypes, setVisibleEdgeTypes] = useState(new Set(["winsOver"]));
   const [only1Seed, setOnly1Seed] = useState(false);
+  const [showImpactsOnTeam, setShowImpactsOnTeam] = useState(true);
+  const [showTeamImpactOnOthers, setShowTeamImpactOnOthers] = useState(true);
 
   function toggleConf(c: string) {
     setVisibleConfs(prev => {
@@ -277,8 +279,8 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
 
   // Combined visibility + coloring effect.
   // improvesOdds/hurtsOdds are hidden by default; only the selected node's
-  // connected ones are revealed.  winsOver is toggle-controlled and colored
-  // green (wins) / red (losses) relative to the selected node.
+  // edges are revealed, filtered by direction toggle.
+  // ugm in deps so new edges are hidden immediately after data loads.
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -301,13 +303,18 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
       cy.edges('[type = "winsOver"]').style("display", "none");
     }
 
-    // improvesOdds/hurtsOdds: always hidden; reveal only for selected node
+    // improvesOdds/hurtsOdds: always hidden globally; reveal per direction toggle
     cy.edges('[type = "improvesOdds"],[type = "hurtsOdds"]').style("display", "none");
     if (firstNode) {
       const sel = cy.getElementById(firstNode);
       if (sel.length) {
-        sel.connectedEdges('[type = "improvesOdds"],[type = "hurtsOdds"]')
-          .style("display", "element");
+        const oddsSelector = '[type = "improvesOdds"],[type = "hurtsOdds"]';
+        if (showImpactsOnTeam) {
+          sel.incomers(oddsSelector).style("display", "element");
+        }
+        if (showTeamImpactOnOthers) {
+          sel.outgoers(oddsSelector).style("display", "element");
+        }
       }
     }
 
@@ -327,7 +334,8 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
         });
       }
     }
-  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, firstNode]);
+  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, firstNode, ugm,
+      showImpactsOnTeam, showTeamImpactOnOthers]);
 
   // Responsive layout
   const [showChart, setShowChart] = useState(true);
@@ -379,10 +387,14 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
           visibleKinds={visibleKinds}
           visibleEdgeTypes={visibleEdgeTypes}
           only1Seed={only1Seed}
+          showImpactsOnTeam={showImpactsOnTeam}
+          showTeamImpactOnOthers={showTeamImpactOnOthers}
           onToggleConf={toggleConf}
           onToggleKind={toggleKind}
           onToggleEdgeType={toggleEdgeType}
           onToggle1Seed={() => setOnly1Seed(v => !v)}
+          onToggleImpactsOnTeam={() => setShowImpactsOnTeam(v => !v)}
+          onToggleTeamImpactOnOthers={() => setShowTeamImpactOnOthers(v => !v)}
         />
         <button
           style={{ ...styles.recentreBtn, marginLeft: "auto", flexShrink: 0 }}
@@ -466,10 +478,14 @@ interface GraphFilterProps {
   visibleKinds: Set<string>;
   visibleEdgeTypes: Set<string>;
   only1Seed: boolean;
+  showImpactsOnTeam: boolean;
+  showTeamImpactOnOthers: boolean;
   onToggleConf: (c: string) => void;
   onToggleKind: (k: string) => void;
   onToggleEdgeType: (t: string) => void;
   onToggle1Seed: () => void;
+  onToggleImpactsOnTeam: () => void;
+  onToggleTeamImpactOnOthers: () => void;
 }
 
 const KIND_LABELS: { key: string; label: string }[] = [
@@ -485,7 +501,9 @@ const EDGE_TYPE_LABELS: { key: string; label: string; color: string }[] = [
 
 function GraphFilter({
   visibleConfs, visibleKinds, visibleEdgeTypes, only1Seed,
+  showImpactsOnTeam, showTeamImpactOnOthers,
   onToggleConf, onToggleKind, onToggleEdgeType, onToggle1Seed,
+  onToggleImpactsOnTeam, onToggleTeamImpactOnOthers,
 }: GraphFilterProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -520,6 +538,13 @@ function GraphFilter({
             {label}
           </FilterChip>
         ))}
+        <span style={{ ...chipStyles.divider }} />
+        <FilterChip active={showImpactsOnTeam} onClick={onToggleImpactsOnTeam} color="#7c3aed">
+          Impacts on Team
+        </FilterChip>
+        <FilterChip active={showTeamImpactOnOthers} onClick={onToggleTeamImpactOnOthers} color="#0891b2">
+          Team&apos;s Impact
+        </FilterChip>
       </div>
     </div>
   );
