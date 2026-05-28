@@ -48,7 +48,7 @@ const TEAM_POSITIONS: Record<string, { x: number; y: number }> = {
   ARI: { x: 880, y: 570 }, LAR: { x: 880, y: 680 }, SEA: { x: 880, y: 790 }, SF:  { x: 880, y: 900 },
 };
 
-type LayoutType = "default" | "bracket" | "circle";
+type LayoutType = "default" | "circle" | "standings" | "bracket";
 
 function applyTeamPositions(cy: Core) {
   cy.nodes().forEach(node => {
@@ -59,7 +59,8 @@ function applyTeamPositions(cy: Core) {
   cy.fit(cy.elements(), 40);
 }
 
-function applyBracketLayout(cy: Core) {
+// Current Standings: seeds stacked vertically per conference, unseed below
+function applyStandingsLayout(cy: Core) {
   cy.batch(() => {
     for (const conf of ["AFC", "NFC"] as const) {
       const x = conf === "AFC" ? 220 : 780;
@@ -72,6 +73,47 @@ function applyBracketLayout(cy: Core) {
         return sa - sb;
       });
       nodes.forEach((n, i) => n.position({ x, y: 80 + i * 105 }));
+    }
+  });
+  cy.fit(cy.elements(), 40);
+}
+
+// Playoff Bracket: actual matchup structure
+// Seed 1 = bye (top), then 2v7, 3v6, 4v5 as paired matchups
+// AFC home seeds on left col, WC seeds on inner col; NFC mirrored
+function applyBracketLayout(cy: Core) {
+  const Y_BASE = 100, Y_STEP = 155;
+  cy.batch(() => {
+    for (const conf of ["AFC", "NFC"]) {
+      const homeX = conf === "AFC" ? 120 : 880;
+      const wcX   = conf === "AFC" ? 310 : 690;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const seedMap = new Map<number, any>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const unseeded: any[] = [];
+      cy.nodes(`[conference = "${conf}"]`).forEach(n => {
+        const s = n.data("playoffSeed") as number | null;
+        if (s != null) seedMap.set(s, n);
+        else unseeded.push(n);
+      });
+      // Home seeds (1=bye, 2, 3, 4) — left/right outer column
+      ([1, 2, 3, 4] as const).forEach((s, i) => {
+        const n = seedMap.get(s);
+        if (n) n.position({ x: homeX, y: Y_BASE + i * Y_STEP });
+      });
+      // Wild-card seeds facing their home-seed opponent
+      // row 0 = seed 1 bye (no WC), row 1 = 2v7, row 2 = 3v6, row 3 = 4v5
+      ([null, 7, 6, 5] as (number | null)[]).forEach((s, i) => {
+        if (s == null) return;
+        const n = seedMap.get(s);
+        if (n) n.position({ x: wcX, y: Y_BASE + i * Y_STEP });
+      });
+      // Unseeded teams spread below the bracket
+      const outBase = conf === "AFC" ? 120 : 500;
+      const outStep = conf === "AFC" ? 80  : 80;
+      unseeded.forEach((n, i) => {
+        n.position({ x: outBase + (i % 5) * outStep, y: Y_BASE + 4 * Y_STEP + Math.floor(i / 5) * 100 });
+      });
     }
   });
   cy.fit(cy.elements(), 40);
@@ -91,8 +133,9 @@ function applyCircleLayout(cy: Core) {
 }
 
 function applyLayout(cy: Core, layout: LayoutType) {
-  if (layout === "bracket") applyBracketLayout(cy);
-  else if (layout === "circle") applyCircleLayout(cy);
+  if (layout === "bracket")   applyBracketLayout(cy);
+  else if (layout === "standings") applyStandingsLayout(cy);
+  else if (layout === "circle")    applyCircleLayout(cy);
   else applyTeamPositions(cy);
 }
 
@@ -240,6 +283,8 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
   const [activeLayout, setActiveLayout] = useState<LayoutType>("default");
   const layoutRef = useRef<LayoutType>("default");
   const [legendPos, setLegendPos] = useState({ x: 10, y: 60 });
+  const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
+  const legendRef = useRef<HTMLDivElement | null>(null);
 
   function toggleConf(c: string) {
     setVisibleConfs(prev => {
@@ -319,12 +364,22 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
     if (cy) applyLayout(cy, l);
   };
 
-  // Legend drag handler
+  // Legend drag handler — clamped to canvas bounds
   const startLegendDrag = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX - legendPos.x;
     const startY = e.clientY - legendPos.y;
-    const onMove = (ev: MouseEvent) => setLegendPos({ x: ev.clientX - startX, y: ev.clientY - startY });
+    const onMove = (ev: MouseEvent) => {
+      let nx = ev.clientX - startX;
+      let ny = ev.clientY - startY;
+      const wrapper = canvasWrapperRef.current;
+      const legend  = legendRef.current;
+      if (wrapper && legend) {
+        nx = Math.max(0, Math.min(wrapper.clientWidth  - legend.offsetWidth,  nx));
+        ny = Math.max(0, Math.min(wrapper.clientHeight - legend.offsetHeight, ny));
+      }
+      setLegendPos({ x: nx, y: ny });
+    };
     const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -400,9 +455,11 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
     // Edge labels
     cy.edges().style("label", "");
     if (showEdgeLabels) {
-      cy.edges('[type = "improvesOdds"]').style("label", "+");
-      cy.edges('[type = "hurtsOdds"]').style("label", "−");
-      cy.edges('[type = "winsOver"]').style("label", "W");
+      cy.edges('[type = "improvesOdds"]').style("label", "Improves Odds");
+      cy.edges('[type = "hurtsOdds"]').style("label", "Hurts Odds");
+      if (firstNode) {
+        cy.edges('[type = "winsOver"]').style("label", "Beat");
+      }
     }
   }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, firstNode, ugm,
       showImpactsOnTeam, showTeamImpactOnOthers, showEdgeLabels]);
@@ -479,8 +536,9 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
             }}
           >
             <option value="default">Default</option>
-            <option value="bracket">Playoff Bracket</option>
             <option value="circle">Circular</option>
+            <option value="standings">Current Standings</option>
+            <option value="bracket">Playoff Bracket</option>
           </select>
           <button
             style={styles.recentreBtn}
@@ -495,7 +553,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
       {/* Main two-column area */}
       <div style={{ ...styles.canvasArea, flexDirection: narrow ? "column" : "row" }}>
         {/* Canvas */}
-        <div style={styles.canvasWrapper}>
+        <div ref={canvasWrapperRef} style={styles.canvasWrapper}>
           <CytoscapeCanvas
             ugm={ugm}
             layout="preset"
@@ -508,7 +566,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
             onReady={handleCanvasReady}
             className="pg-canvas"
           />
-          <PlayoffLegend pos={legendPos} onDragStart={startLegendDrag} />
+          <PlayoffLegend pos={legendPos} onDragStart={startLegendDrag} legendRef={legendRef} />
         </div>
 
         {/* Inspector resize handle */}
@@ -523,7 +581,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
               ? "Team Details"
               : selectedEdgeData
                 ? "Game Details"
-                : "Click any team to see their playoff picture"}
+                : "Click any team to view details"}
           </div>
           {selectedNodeData && (
             <TeamPanel node={selectedNodeData} graphData={graphData} />
@@ -610,7 +668,7 @@ function GraphFilter({
           </FilterChip>
         ))}
         <span style={{ ...chipStyles.divider }} />
-        <span style={chipStyles.label}>STATUS:</span>
+        <span style={chipStyles.label}>FILTERS:</span>
         {KIND_LABELS.map(({ key, label }) => (
           <FilterChip key={key} active={visibleKinds.has(key)} onClick={() => onToggleKind(key)}>
             {label}
@@ -628,7 +686,6 @@ function GraphFilter({
             {label}
           </FilterChip>
         ))}
-        <span style={{ ...chipStyles.divider }} />
         <FilterChip active={showImpactsOnTeam} onClick={onToggleImpactsOnTeam} color="#7c3aed">
           Impacts on Team
         </FilterChip>
@@ -743,12 +800,14 @@ const LEGEND_EDGE_ITEMS = [
   { color: "#6b7280", label: "Wins Over"     },
 ];
 
-function PlayoffLegend({ pos, onDragStart }: {
+function PlayoffLegend({ pos, onDragStart, legendRef }: {
   pos: { x: number; y: number };
   onDragStart: (e: React.MouseEvent) => void;
+  legendRef: React.RefObject<HTMLDivElement | null>;
 }) {
   return (
     <div
+      ref={legendRef}
       onMouseDown={onDragStart}
       style={{
         position: "absolute", left: pos.x, top: pos.y,
@@ -917,7 +976,7 @@ function TeamPanel({ node, graphData }: TeamPanelProps) {
       </CollapsibleSection>
 
       {/* This team's impacts on others */}
-      <CollapsibleSection title="Team's Impacts" count={teamImpacts.length}>
+      <CollapsibleSection title="Impacts on Others" count={teamImpacts.length}>
         {teamImpacts.length === 0 ? (
           <div style={{ color: "var(--text-faint)", fontSize: 11 }}>No outgoing impacts this week</div>
         ) : teamImpacts.map(e => {
@@ -973,11 +1032,11 @@ function EdgeDetail({ edge }: { edge: GraphEdge }) {
 // this week, colored by which team to root for relative to the selected node.
 
 const MODES = [
+  { key: "overall",       label: "Overall"  },
   { key: "division",      label: "Division" },
-  { key: "wildcard",      label: "Wild Card" },
-  { key: "conf_one_seed", label: "#1 Seed"   },
-  { key: "overall",       label: "Overall"   },
-  { key: "tank",          label: "Tank"      },
+  { key: "wildcard",      label: "Wild Card"},
+  { key: "conf_one_seed", label: "#1 Seed"  },
+  { key: "tank",          label: "Tank"     },
 ] as const;
 
 function ImpactChart({ graphData, selectedNodeId, mode, onModeChange }: {
