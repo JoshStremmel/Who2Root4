@@ -74,7 +74,7 @@ function applyNodeStyles(cy: Core) {
       if (seed != null) {
         const svg = [
           `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>`,
-          `<text x='50' y='50' text-anchor='middle' dominant-baseline='central'`,
+          `<text x='50' y='50' dy='0.35em' text-anchor='middle'`,
           ` fill='#ffffff' fill-opacity='0.95'`,
           ` font-size='52' font-weight='900'`,
           ` font-family='system-ui,-apple-system,Arial,sans-serif'>${seed}</text>`,
@@ -110,10 +110,11 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       "text-outline-color":    "#1f2937",
       "text-outline-width":    1.5,
       "text-outline-opacity":  0.75,
-      "background-fit":        "contain",
+      "background-width":      "100%",
+      "background-height":     "100%",
       "background-clip":       "node",
-      "background-position-x": "50%",
-      "background-position-y": "50%",
+      "background-position-x": 0,
+      "background-position-y": 0,
     },
   },
   // Conference fallback colors + glow (outline ring + shadow blur)
@@ -234,6 +235,9 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   const [visibleKinds, setVisibleKinds] = useState(
     new Set(["division_leader", "wildcard", "in_hunt", "eliminated"]),
   );
+  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState(
+    new Set(["improvesOdds", "hurtsOdds", "neutral", "winsOver"]),
+  );
   const [only1Seed, setOnly1Seed] = useState(false);
 
   function toggleConf(c: string) {
@@ -247,6 +251,13 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     setVisibleKinds(prev => {
       const next = new Set(prev);
       next.has(k) ? next.delete(k) : next.add(k);
+      return next;
+    });
+  }
+  function toggleEdgeType(t: string) {
+    setVisibleEdgeTypes(prev => {
+      const next = new Set(prev);
+      next.has(t) ? next.delete(t) : next.add(t);
       return next;
     });
   }
@@ -306,7 +317,7 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     const cy = cyRef.current;
     if (!cy) return;
     cy.elements().removeStyle("display");
-    const toHide = cy.nodes().filter(node => {
+    const toHideNodes = cy.nodes().filter(node => {
       const conf = node.data("conference") as string;
       const kind = node.data("standingKind") as string;
       if (!visibleConfs.has(conf)) return true;
@@ -314,9 +325,12 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
       if (only1Seed && !node.data("is1SeedContender")) return true;
       return false;
     });
-    toHide.style("display", "none");
-    toHide.connectedEdges().style("display", "none");
-  }, [visibleConfs, visibleKinds, only1Seed]);
+    toHideNodes.style("display", "none");
+    toHideNodes.connectedEdges().style("display", "none");
+    cy.edges()
+      .filter(edge => !visibleEdgeTypes.has(edge.data("type") as string))
+      .style("display", "none");
+  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes]);
 
   // Selected element
   const firstNode = [...selectedNodeIds][0] ?? null;
@@ -376,9 +390,11 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
         <GraphFilter
           visibleConfs={visibleConfs}
           visibleKinds={visibleKinds}
+          visibleEdgeTypes={visibleEdgeTypes}
           only1Seed={only1Seed}
           onToggleConf={toggleConf}
           onToggleKind={toggleKind}
+          onToggleEdgeType={toggleEdgeType}
           onToggle1Seed={() => setOnly1Seed(v => !v)}
         />
         <button
@@ -461,9 +477,11 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
 interface GraphFilterProps {
   visibleConfs: Set<string>;
   visibleKinds: Set<string>;
+  visibleEdgeTypes: Set<string>;
   only1Seed: boolean;
   onToggleConf: (c: string) => void;
   onToggleKind: (k: string) => void;
+  onToggleEdgeType: (t: string) => void;
   onToggle1Seed: () => void;
 }
 
@@ -474,34 +492,51 @@ const KIND_LABELS: { key: string; label: string }[] = [
   { key: "eliminated",      label: "Out"         },
 ];
 
+const EDGE_TYPE_LABELS: { key: string; label: string; color: string }[] = [
+  { key: "improvesOdds", label: "Improves Odds", color: "#22c55e" },
+  { key: "hurtsOdds",    label: "Hurts Odds",    color: "#ef4444" },
+  { key: "neutral",      label: "Neutral",       color: "#9ca3af" },
+  { key: "winsOver",     label: "Wins Over",     color: "#6b7280" },
+];
+
 function GraphFilter({
-  visibleConfs, visibleKinds, only1Seed,
-  onToggleConf, onToggleKind, onToggle1Seed,
+  visibleConfs, visibleKinds, visibleEdgeTypes, only1Seed,
+  onToggleConf, onToggleKind, onToggleEdgeType, onToggle1Seed,
 }: GraphFilterProps) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-      <span style={chipStyles.label}>CONF:</span>
-      {(["AFC", "NFC"] as const).map(c => (
-        <FilterChip
-          key={c}
-          active={visibleConfs.has(c)}
-          onClick={() => onToggleConf(c)}
-          color={c === "AFC" ? "#dc2626" : "#2563eb"}
-        >
-          {c}
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <span style={chipStyles.label}>CONF:</span>
+        {(["AFC", "NFC"] as const).map(c => (
+          <FilterChip
+            key={c}
+            active={visibleConfs.has(c)}
+            onClick={() => onToggleConf(c)}
+            color={c === "AFC" ? "#dc2626" : "#2563eb"}
+          >
+            {c}
+          </FilterChip>
+        ))}
+        <span style={{ ...chipStyles.divider }} />
+        <span style={chipStyles.label}>STATUS:</span>
+        {KIND_LABELS.map(({ key, label }) => (
+          <FilterChip key={key} active={visibleKinds.has(key)} onClick={() => onToggleKind(key)}>
+            {label}
+          </FilterChip>
+        ))}
+        <span style={{ ...chipStyles.divider }} />
+        <FilterChip active={only1Seed} onClick={onToggle1Seed} color="#f59e0b">
+          1-Seed Hunt
         </FilterChip>
-      ))}
-      <span style={{ ...chipStyles.divider }} />
-      <span style={chipStyles.label}>STATUS:</span>
-      {KIND_LABELS.map(({ key, label }) => (
-        <FilterChip key={key} active={visibleKinds.has(key)} onClick={() => onToggleKind(key)}>
-          {label}
-        </FilterChip>
-      ))}
-      <span style={{ ...chipStyles.divider }} />
-      <FilterChip active={only1Seed} onClick={onToggle1Seed} color="#f59e0b">
-        1-Seed Hunt
-      </FilterChip>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <span style={chipStyles.label}>EDGES:</span>
+        {EDGE_TYPE_LABELS.map(({ key, label, color }) => (
+          <FilterChip key={key} active={visibleEdgeTypes.has(key)} onClick={() => onToggleEdgeType(key)} color={color}>
+            {label}
+          </FilterChip>
+        ))}
+      </div>
     </div>
   );
 }
@@ -757,7 +792,7 @@ const styles = {
     display:      "flex",
     alignItems:   "center",
     gap:          8,
-    padding:      "3px 10px",
+    padding:      "5px 10px",
     borderBottom: "1px solid var(--border)",
     background:   "var(--surface)",
     flexWrap:     "wrap" as const,
