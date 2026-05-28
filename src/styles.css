@@ -1207,6 +1207,10 @@ a.topnav .tab-graph, .topnav a.tab-graph {
 .team-menu .item .swatch { width: 10px; height: 10px; border-radius: 50%; }
 .team-menu .item .ab { font-family: var(--font-data); font-weight: 700; font-size: 11px; color: var(--text-faint); margin-left: auto; letter-spacing: 0.04em; }
 .team-menu .item.current { background: var(--surface-2); font-weight: 600; }
+.team-menu::-webkit-scrollbar { width: 5px; }
+.team-menu::-webkit-scrollbar-track { background: transparent; }
+.team-menu::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+.team-menu::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 
 .position-rel { position: relative; }
 

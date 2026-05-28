@@ -166,21 +166,21 @@ const PLAYOFF_GRAPH_STYLESHEET = [
       "text-outline-opacity": 0.75,
     },
   },
-  // Conference fallback colors + glow (outline ring + shadow blur)
+  // Conference fallback colors + subtle ring + soft glow
   {
     selector: 'node[conference = "AFC"]',
     style: {
       "background-color": "#b91c1c",
       "outline-color":    "#ef4444",
-      "outline-width":    10,
-      "outline-opacity":  0.65,
+      "outline-width":    3,
+      "outline-opacity":  0.22,
       "outline-style":    "solid",
       "outline-offset":   2,
       "shadow-color":     "#ef4444",
-      "shadow-blur":      14,
+      "shadow-blur":      6,
       "shadow-offset-x":  0,
       "shadow-offset-y":  0,
-      "shadow-opacity":   0.5,
+      "shadow-opacity":   0.12,
     },
   },
   {
@@ -188,15 +188,15 @@ const PLAYOFF_GRAPH_STYLESHEET = [
     style: {
       "background-color": "#1d4ed8",
       "outline-color":    "#3b82f6",
-      "outline-width":    10,
-      "outline-opacity":  0.65,
+      "outline-width":    3,
+      "outline-opacity":  0.22,
       "outline-style":    "solid",
       "outline-offset":   2,
       "shadow-color":     "#3b82f6",
-      "shadow-blur":      14,
+      "shadow-blur":      6,
       "shadow-offset-x":  0,
       "shadow-offset-y":  0,
-      "shadow-opacity":   0.5,
+      "shadow-opacity":   0.12,
     },
   },
   // Team brand color (same palette as the main page) — overrides conf fallback
@@ -591,21 +591,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
           onToggleEdgeLabels={() => setShowEdgeLabels(v => !v)}
         />
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          <select
-            value={activeLayout}
-            onChange={(e) => handleLayoutChange(e.target.value as LayoutType)}
-            style={{
-              ...styles.recentreBtn,
-              padding: "4px 8px",
-              appearance: "auto" as unknown as undefined,
-              colorScheme: "inherit" as React.CSSProperties["colorScheme"],
-            }}
-          >
-            <option value="default">Default</option>
-            <option value="circle">Circular</option>
-            <option value="standings">Current Standings</option>
-            <option value="bracket">Playoff Bracket</option>
-          </select>
+          <LayoutSelect value={activeLayout} onChange={handleLayoutChange} />
           <button
             style={styles.recentreBtn}
             onClick={() => cyRef.current && applyLayout(cyRef.current, activeLayout)}
@@ -1242,6 +1228,69 @@ function ImpactChart({ graphData, selectedNodeId, mode, onModeChange }: {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── LayoutSelect (custom dropdown — matches WeekSelect accent styling) ────────
+
+const LAYOUT_OPTIONS: { value: LayoutType; label: string }[] = [
+  { value: "default",   label: "Default"           },
+  { value: "circle",    label: "Circular"          },
+  { value: "standings", label: "Current Standings" },
+  { value: "bracket",   label: "Playoff Bracket"   },
+];
+
+function LayoutSelect({ value, onChange }: { value: LayoutType; onChange: (l: LayoutType) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const label = LAYOUT_OPTIONS.find(o => o.value === value)?.label ?? value;
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ ...styles.recentreBtn, display: "flex", alignItems: "center", gap: 6 }}
+      >
+        {label}
+        <span style={{ fontSize: 9, opacity: 0.55 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", right: 0,
+          background: "var(--surface)", border: "1px solid var(--border)",
+          borderRadius: 8, boxShadow: "var(--shadow, 0 4px 12px rgba(0,0,0,0.18))",
+          zIndex: 200, minWidth: 150,
+        }}>
+          {LAYOUT_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              style={{
+                display: "block", width: "100%", padding: "6px 14px",
+                background: value === opt.value ? "var(--accent)" : "transparent",
+                color: value === opt.value ? "#fff" : "var(--text)",
+                border: "none", cursor: "pointer",
+                fontSize: 12, fontFamily: "var(--font-data)",
+                fontWeight: value === opt.value ? 600 : 400,
+                textAlign: "left" as const,
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
