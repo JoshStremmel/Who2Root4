@@ -294,6 +294,9 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
   const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
+  // Pinned node: when an edge connected to the active node is tapped, remember
+  // the node so its edges stay visible even if the store clears selectedNodeIds.
+  const [pinnedNodeId, setPinnedNodeId] = useState<string | null>(null);
 
   function toggleConf(c: string) {
     setVisibleConfs(prev => {
@@ -350,16 +353,21 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
       setTimeout(() => { applyLayout(cy, layoutRef.current); }, 0);
 
       cy.on("tap", (evt) => {
-        if (evt.target === cy) { selectNodes([]); selectEdges([]); setSelectedEdge(null); }
+        if (evt.target === cy) { selectNodes([]); selectEdges([]); setSelectedEdge(null); setPinnedNodeId(null); }
       });
-      cy.on("tap", "node", (evt) => { selectNodes([evt.target.id()]); setSelectedEdge(null); });
+      cy.on("tap", "node", (evt) => { selectNodes([evt.target.id()]); setSelectedEdge(null); setPinnedNodeId(null); });
       cy.on("tap", "edge", (evt) => {
         const e   = evt.target;
         const src = e.source().id();
         const tgt = e.target().id();
         const cur = firstNodeRef.current;
-        // Only deselect the node if this edge isn't connected to it
-        if (!cur || (src !== cur && tgt !== cur)) selectNodes([]);
+        if (!cur || (src !== cur && tgt !== cur)) {
+          selectNodes([]);
+          setPinnedNodeId(null);
+        } else {
+          // Edge is connected to the active node — pin it so its edges stay visible
+          setPinnedNodeId(cur);
+        }
         selectEdges([e.id()]);
         setSelectedEdge({
           id: e.id(),
@@ -377,11 +385,12 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
     [selectNodes, selectEdges],
   );
 
-  // Reapply layout when UGM updates; also clear any stale edge selection
+  // Reapply layout when UGM updates; also clear any stale edge/pin selection
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
     setSelectedEdge(null);
+    setPinnedNodeId(null);
     setTimeout(() => { applyLayout(cy, layoutRef.current); }, 50);
   }, [ugm]);
 
@@ -416,9 +425,11 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
 
   // Selected element
   const firstNode = [...selectedNodeIds][0] ?? null;
-  firstNodeRef.current = firstNode;   // keep ref in sync for tap-handler closures
-  const selectedNodeData = firstNode
-    ? graphData.nodes.find(n => n.id === firstNode) ?? null
+  // effectiveNode: the node driving visibility — either directly selected or pinned via an edge tap
+  const effectiveNode = firstNode || pinnedNodeId;
+  firstNodeRef.current = effectiveNode;   // keep ref in sync for tap-handler closures
+  const selectedNodeData = effectiveNode
+    ? graphData.nodes.find(n => n.id === effectiveNode) ?? null
     : null;
 
   // Combined visibility + coloring effect.
@@ -451,8 +462,8 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
 
     // improvesOdds/hurtsOdds: always hidden globally; reveal per direction toggle
     cy.edges('[type = "improvesOdds"],[type = "hurtsOdds"]').style("display", "none");
-    if (firstNode) {
-      const sel = cy.getElementById(firstNode);
+    if (effectiveNode) {
+      const sel = cy.getElementById(effectiveNode);
       if (sel.length) {
         const oddsSelector = '[type = "improvesOdds"],[type = "hurtsOdds"]';
         if (showImpactsOnTeam) {
@@ -469,8 +480,8 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
 
     // winsOver coloring: outgoing=green (win), incoming=red (loss)
     cy.edges('[type = "winsOver"]').removeStyle("line-color target-arrow-color");
-    if (firstNode) {
-      const sel = cy.getElementById(firstNode);
+    if (effectiveNode) {
+      const sel = cy.getElementById(effectiveNode);
       if (sel.length) {
         sel.outgoers('edge[type = "winsOver"]').style({
           "line-color": "#22c55e", "target-arrow-color": "#22c55e",
@@ -480,21 +491,21 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         });
       }
     }
-    // Gray out nodes and edges not connected to the selected node or edge
-    if (firstNode) {
-      const sel = cy.getElementById(firstNode);
+    // Gray out nodes and edges not connected to the effective node or selected edge
+    if (effectiveNode) {
+      const sel = cy.getElementById(effectiveNode);
       if (sel.length) {
-        const connectedIds = new Set<string>([firstNode]);
+        const connectedIds = new Set<string>([effectiveNode]);
         cy.edges().filter(e =>
           e.style("display") !== "none" &&
-          (e.source().id() === firstNode || e.target().id() === firstNode)
+          (e.source().id() === effectiveNode || e.target().id() === effectiveNode)
         ).forEach(e => { connectedIds.add(e.source().id()); connectedIds.add(e.target().id()); });
         // Dim non-connected nodes (including their conf glow via opacity)
         cy.nodes().filter(n => !connectedIds.has(n.id()))
           .style("opacity", 0.15);
-        // Dim all edges that don't directly touch the selected node
+        // Dim all edges that don't directly touch the effective node
         cy.edges().filter(e =>
-          e.source().id() !== firstNode && e.target().id() !== firstNode
+          e.source().id() !== effectiveNode && e.target().id() !== effectiveNode
         ).style("opacity", 0.15);
       }
     } else if (selectedEdge) {
@@ -509,15 +520,15 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
     if (showEdgeLabels) {
       cy.edges('[type = "improvesOdds"]').style("label", "Improves Odds");
       cy.edges('[type = "hurtsOdds"]').style("label", "Hurts Odds");
-      if (firstNode) {
-        const sel = cy.getElementById(firstNode);
+      if (effectiveNode) {
+        const sel = cy.getElementById(effectiveNode);
         if (sel.length) {
           sel.outgoers('edge[type = "winsOver"]').style("label", "Defeated");
           sel.incomers('edge[type = "winsOver"]').style("label", "Defeated");
         }
       }
     }
-  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, firstNode, selectedEdge, ugm,
+  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, effectiveNode, selectedEdge, ugm,
       showImpactsOnTeam, showTeamImpactOnOthers, showEdgeLabels]);
 
   // Responsive layout
