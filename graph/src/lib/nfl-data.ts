@@ -171,15 +171,23 @@ function formatKickoff(iso: string | undefined): string {
 function deriveSlot(iso: string | undefined): string {
   if (!iso) return "TBD";
   const d = new Date(iso);
-  const dow = d.getUTCDay();
-  const hourEt = (d.getUTCHours() + 24 - 4) % 24;
-  if (dow === 4) return "TNF";
-  if (dow === 1) return "MNF";
-  if (dow === 5) return "Fri";
-  if (dow === 6) return "Sat";
-  if (dow === 0) {
-    if (hourEt >= 19) return "SNF";
-    if (hourEt >= 16) return "Late";
+  // Use America/New_York so evening games that cross midnight UTC (e.g. SNF, MNF)
+  // land on the correct ET calendar day instead of rolling to the next day.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone:  "America/New_York",
+    weekday:   "short",
+    hour:      "numeric",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const dow  = parts.find(p => p.type === "weekday")?.value ?? "";
+  const hour = parseInt(parts.find(p => p.type === "hour")?.value ?? "0", 10);
+  if (dow === "Thu") return "TNF";
+  if (dow === "Mon") return "MNF";
+  if (dow === "Fri") return "Fri";
+  if (dow === "Sat") return "Sat";
+  if (dow === "Sun") {
+    if (hour >= 19) return "SNF";
+    if (hour >= 16) return "Late";
     return "Early";
   }
   return "Reg";

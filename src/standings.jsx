@@ -77,10 +77,10 @@ function DivisionTable({ conf, div, teams, fav, seeds }) {
                 <span className="mono">{(strength * 100).toFixed(0)}</span>
               </div>
               <div className="seed-cell">
+                {isFav && <span className="you-tag">You</span>}
                 {!inPlayoffs && s && s.gamesBehind != null && (
                   <span className="gb mono">{s.gamesBehind} GB</span>
                 )}
-                {isFav && <span className="you-tag">You</span>}
               </div>
             </div>
           );
@@ -164,9 +164,10 @@ function ConfBracket({ conf, seeds, fav }) {
 
 function Standings({ fav }) {
   const seeds = window.computeStandings();
-  const order = ["East", "North", "South", "West"];
+  const order = ["North", "South", "East", "West"];
   const favTeam = window.TEAMS[fav];
   const favSeed = seeds.byTeam[fav];
+  const otherConf = favTeam.conf === "AFC" ? "NFC" : "AFC";
 
   return (
     <>
@@ -182,98 +183,97 @@ function Standings({ fav }) {
         </div>
       </div>
 
-      <div className="standings-grid">
-        <div className="standings-divisions">
-          {["AFC", "NFC"].map((conf, ci) => (
-            <div key={conf} className="conf-block"
-                 style={{ "--section-delay": `${ci * 80}ms` }}>
-              <h2 className="conf-title">{conf}</h2>
-              <div className="div-tables">
-                {order.map(div => (
-                  <DivisionTable
-                    key={div}
-                    conf={conf}
-                    div={div}
-                    teams={seeds.divisions[conf][div]}
-                    fav={fav}
-                    seeds={seeds}
-                  />
-                ))}
+      {/* Playoff picture — AFC & NFC side by side */}
+      <div className="brackets-row">
+        <ConfBracket conf={favTeam.conf} seeds={seeds} fav={fav} />
+        <ConfBracket conf={otherConf} seeds={seeds} fav={fav} />
+      </div>
+
+      {/* Division tables — AFC then NFC, all 4 in a row each */}
+      {["AFC", "NFC"].map((conf, ci) => (
+        <div key={conf} className="conf-block"
+             style={{ "--section-delay": `${ci * 80}ms` }}>
+          <h2 className="conf-title">{conf}</h2>
+          <div className="div-tables-row">
+            {order.map(div => (
+              <DivisionTable
+                key={div}
+                conf={conf}
+                div={div}
+                teams={seeds.divisions[conf][div]}
+                fav={fav}
+                seeds={seeds}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Tiebreakers — resolved list + DIV & WC procedures side by side */}
+      <div className="tb-panel">
+        <div className="bracket-head">
+          <h4>Tiebreakers resolved</h4>
+          <span className="mono">{Object.keys(window.TIEBREAKER_REASONS).length}</span>
+        </div>
+        <div className="tb-list">
+          {Object.entries(window.TIEBREAKER_REASONS).map(([abbr, tb]) => {
+            const t = window.TEAMS[abbr];
+            return (
+              <div className="tb-row" key={abbr}>
+                <span className="tb-swatch" style={{ background: t.color }}></span>
+                <span className="tb-team">
+                  <span className="mono ab">{abbr}</span>
+                  <span className="tb-over">over {tb.over.join(", ")}</span>
+                </span>
+                <span className="tb-reason">{tb.reason}</span>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        <aside className="standings-side">
-          <ConfBracket conf={favTeam.conf} seeds={seeds} fav={fav} />
-          <ConfBracket conf={favTeam.conf === "AFC" ? "NFC" : "AFC"} seeds={seeds} fav={fav} />
-
-          <div className="tb-panel">
-            <div className="bracket-head">
-              <h4>Tiebreakers resolved</h4>
-              <span className="mono">{Object.keys(window.TIEBREAKER_REASONS).length}</span>
+        <div className="tb-procs">
+          <div className="tb-proc-block">
+            <div className="tb-proc-head">
+              <span className="tb-proc-tag div">DIV</span>
+              <span className="tb-proc-title">Divisional tie-breaker procedure</span>
             </div>
-            <div className="tb-list">
-              {Object.entries(window.TIEBREAKER_REASONS).map(([abbr, tb]) => {
-                const t = window.TEAMS[abbr];
-                return (
-                  <div className="tb-row" key={abbr}>
-                    <span className="tb-swatch" style={{ background: t.color }}></span>
-                    <span className="tb-team">
-                      <span className="mono ab">{abbr}</span>
-                      <span className="tb-over">over {tb.over.join(", ")}</span>
-                    </span>
-                    <span className="tb-reason">{tb.reason}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="tb-procs">
-              <div className="tb-proc-block">
-                <div className="tb-proc-head">
-                  <span className="tb-proc-tag div">DIV</span>
-                  <span className="tb-proc-title">Divisional tie-breaker procedure</span>
-                </div>
-                <ol className="tb-proc-list">
-                  <li className="lead">Head-to-head (best won-lost-tied % in games between the clubs)</li>
-                  <li>Best won-lost-tied % in games played within the division</li>
-                  <li>Best won-lost-tied % in common games</li>
-                  <li>Best won-lost-tied % in games played within the conference</li>
-                  <li>Strength of victory</li>
-                  <li>Strength of schedule</li>
-                  <li>Best combined ranking in conference points scored &amp; allowed</li>
-                  <li>Best combined ranking in NFL points scored &amp; allowed</li>
-                  <li>Best net points in common games</li>
-                  <li>Best net points in all games</li>
-                  <li>Best net touchdowns in all games</li>
-                  <li>Coin toss</li>
-                </ol>
-              </div>
-
-              <div className="tb-proc-block">
-                <div className="tb-proc-head">
-                  <span className="tb-proc-tag wc">WC</span>
-                  <span className="tb-proc-title">Wild-card tie-breaker procedure</span>
-                </div>
-                <ol className="tb-proc-list">
-                  <li className="lead">Apply divisional tie-breaker to eliminate all but the highest-ranked club in each division first</li>
-                  <li>Head-to-head sweep (only if one club has beaten or lost to each of the others)</li>
-                  <li>Best won-lost-tied % in games played within the conference</li>
-                  <li>Best won-lost-tied % in common games (minimum of four)</li>
-                  <li>Strength of victory</li>
-                  <li>Strength of schedule</li>
-                  <li>Best combined ranking in conference points scored &amp; allowed</li>
-                  <li>Best combined ranking in NFL points scored &amp; allowed</li>
-                  <li>Best net points in conference games</li>
-                  <li>Best net points in all games</li>
-                  <li>Best net touchdowns in all games</li>
-                  <li>Coin toss</li>
-                </ol>
-              </div>
-            </div>
+            <ol className="tb-proc-list">
+              <li className="lead">Head-to-head (best won-lost-tied % in games between the clubs)</li>
+              <li>Best won-lost-tied % in games played within the division</li>
+              <li>Best won-lost-tied % in common games</li>
+              <li>Best won-lost-tied % in games played within the conference</li>
+              <li>Strength of victory</li>
+              <li>Strength of schedule</li>
+              <li>Best combined ranking in conference points scored &amp; allowed</li>
+              <li>Best combined ranking in NFL points scored &amp; allowed</li>
+              <li>Best net points in common games</li>
+              <li>Best net points in all games</li>
+              <li>Best net touchdowns in all games</li>
+              <li>Coin toss</li>
+            </ol>
           </div>
-        </aside>
+
+          <div className="tb-proc-block">
+            <div className="tb-proc-head">
+              <span className="tb-proc-tag wc">WC</span>
+              <span className="tb-proc-title">Wild-card tie-breaker procedure</span>
+            </div>
+            <ol className="tb-proc-list">
+              <li className="lead">Apply divisional tie-breaker to eliminate all but the highest-ranked club in each division first</li>
+              <li>Head-to-head sweep (only if one club has beaten or lost to each of the others)</li>
+              <li>Best won-lost-tied % in games played within the conference</li>
+              <li>Best won-lost-tied % in common games (minimum of four)</li>
+              <li>Strength of victory</li>
+              <li>Strength of schedule</li>
+              <li>Best combined ranking in conference points scored &amp; allowed</li>
+              <li>Best combined ranking in NFL points scored &amp; allowed</li>
+              <li>Best net points in conference games</li>
+              <li>Best net points in all games</li>
+              <li>Best net touchdowns in all games</li>
+              <li>Coin toss</li>
+            </ol>
+          </div>
+        </div>
       </div>
     </>
   );

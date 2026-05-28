@@ -137,7 +137,7 @@ export function GraphView() {
 
   // Apply stored theme on mount
   useEffect(() => {
-    const dark = getTweakPref("theme", "light") === "dark";
+    const dark = getTweakPref<string>("theme", "light") === "dark";
     setIsDark(dark);
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
     document.documentElement.style.colorScheme = dark ? "dark" : "light";

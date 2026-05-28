@@ -50,7 +50,6 @@ function ModeSelector({ favAbbr, mode, setMode }) {
               title={enabled ? m.desc : `${m.label} is no longer mathematically reachable`}
             >
               {m.label}
-              {!enabled && <span className="mode-lock" aria-hidden="true">·</span>}
             </button>
           );
         })}
@@ -203,7 +202,7 @@ function HeroRec({ rec, fav, onOpen, mode }) {
           against the {against.name}.
         </h2>
         <div className="hero-badges">
-          <StrengthBadge strength={rec.strength} category={rec.category} />
+          {rec.score >= 0.001 && <StrengthBadge strength={rec.strength} category={rec.category} />}
           {rec.underdog === rec.rootFor && (
             <span className="under-tag">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -283,7 +282,7 @@ function RecCard({ rec, rank, onOpen, delay, mode }) {
         </div>
       </div>
       <div className="rec-card-badges">
-        {rec.category && <StrengthBadge strength={rec.strength} category={rec.category} />}
+        {rec.category && !noImpact && <StrengthBadge strength={rec.strength} category={rec.category} />}
         {rec.underdog === rec.rootFor && (
           <span className="under-tag small">
             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">

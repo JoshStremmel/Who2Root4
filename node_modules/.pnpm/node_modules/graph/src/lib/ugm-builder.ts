@@ -116,7 +116,13 @@ function modeScore(
 
 // ── Playoff probability heuristic ─────────────────────────────────────────────
 
-function playoffProbability(abbr: string, standing: StandingEntry | undefined, teams: Record<string, TeamData>): number {
+function playoffProbability(
+  abbr: string,
+  standing: StandingEntry | undefined,
+  teams: Record<string, TeamData>,
+  inDivContention = false,
+  divGB = 0,
+): number {
   const t = teams[abbr];
   if (!t) return 0.5;
   const gamesPlayed = t.record[0] + t.record[1] + t.record[2];
@@ -131,7 +137,12 @@ function playoffProbability(abbr: string, standing: StandingEntry | undefined, t
   if (standing.kind === "wildcard") {
     return +(0.45 + 0.20 * progress).toFixed(2);
   }
-  // "out"
+  // "out" of wildcard — but may still be in division contention
+  if (inDivContention) {
+    if (divGB <= 0) return +(0.42 * progress).toFixed(2);
+    if (divGB === 1) return +(0.28 * progress).toFixed(2);
+    return +(0.14 * progress).toFixed(2);
+  }
   const gb = standing.gamesBehind ?? 0;
   if (gb <= 0) return +(0.42 * progress).toFixed(2);
   if (gb === 1) return +(0.28 * progress).toFixed(2);
@@ -273,12 +284,33 @@ export function buildGraphData(
     const standing = standings[abbr];
     const label = t.name ? `${t.city} ${t.name}`.trim() : abbr;
 
+    // Check if team can still win their division — a rival's current wins must not
+    // already exceed this team's maximum possible wins.  Needed so a team tied for
+    // their division lead (arbitrarily sorted to the "out" wildcard bucket) is never
+    // wrongly marked eliminated before they've played their final game(s).
+    const divRivals = Object.values(loaded.teams).filter(
+      o => o.conf === t.conf && o.div === t.div && o.abbr !== abbr
+    );
+    const maxWins = t.record[0] + wr;
+    const inDivContention = standing?.kind === "out"
+      && divRivals.every(rival => rival.record[0] <= maxWins);
+    const divLeaderWins = divRivals.length > 0
+      ? Math.max(...divRivals.map(r => r.record[0]))
+      : 0;
+    const divGB = Math.max(0, divLeaderWins - t.record[0]);
+
     const standingKind: GraphNode["standingKind"] =
       !standing            ? "in_hunt"
       : standing.kind === "division" ? "division_leader"
       : standing.kind === "wildcard" ? "wildcard"
       : (standing.gamesBehind ?? 99) <= wr ? "in_hunt"
+      : inDivContention ? "in_hunt"    // division still winnable — not eliminated
       : "eliminated";
+
+    // Eliminated teams have 0% probability; others use the heuristic.
+    const prob = standingKind === "eliminated"
+      ? 0
+      : playoffProbability(abbr, standing, loaded.teams, inDivContention, divGB);
 
     const seed = standing?.seed ?? null;
     const nodeLabel = seed != null ? `#${seed} ${abbr}` : abbr;
@@ -295,7 +327,7 @@ export function buildGraphData(
       wins: t.record[0],
       losses: t.record[1],
       playoffSeed: seed,
-      playoffProbability: playoffProbability(abbr, standing, loaded.teams),
+      playoffProbability: prob,
       color: t.color.replace(/^#/, ""),
       standingKind,
       nodeLabel,

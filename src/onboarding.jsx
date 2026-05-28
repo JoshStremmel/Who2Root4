@@ -15,8 +15,8 @@ function TeamPickerStep({ step, fav, setFav, dislikes, toggleDislike, onNext, on
     if (shell) shell.scrollTop = 0;
   }, [step]);
   const sortedDivisions = [
-  "AFC East", "AFC North", "AFC South", "AFC West",
-  "NFC East", "NFC North", "NFC South", "NFC West"];
+  "AFC North", "AFC South", "AFC East", "AFC West",
+  "NFC North", "NFC South", "NFC East", "NFC West"];
 
 
   const handleClick = (abbr) => {

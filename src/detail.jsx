@@ -35,7 +35,7 @@ function GameDetail({ rec, fav, onClose }) {
         </div>
 
         <div className="detail-tags">
-          {rec.category && (
+          {rec.category && rec.score > 0.001 && (
             <span className={"strength-badge large tone-" + (catMeta?.tone || "muted")}>
               <span className="dot" style={{ background: strengthMeta?.color }}></span>
               <span className="strength-label mono">{strengthMeta?.label || ""}</span>

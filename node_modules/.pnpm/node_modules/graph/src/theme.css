@@ -2,6 +2,7 @@
    Maps Who2Root4 CSS custom properties onto --g3t-* tokens. */
 
 :root {
+  color-scheme: light;
   --g3t-bg:           oklch(0.985 0.004 90);
   --g3t-surface:      #ffffff;
   --g3t-surface-2:    oklch(0.97 0.005 90);
@@ -36,6 +37,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --g3t-bg:           oklch(0.16 0.008 260);
   --g3t-surface:      oklch(0.21 0.008 260);
   --g3t-surface-2:    oklch(0.24 0.008 260);
@@ -65,6 +67,7 @@
 
 * {
   box-sizing: border-box;
+  color-scheme: inherit;
 }
 
 body {

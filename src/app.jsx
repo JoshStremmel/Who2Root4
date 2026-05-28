@@ -72,7 +72,7 @@ function TopNav({ tab, setTab, fav, setFav, theme, setTheme, onOpenOnboarding, u
                   <span>Edit team &amp; rivals</span>
                 </button>
               </div>
-              {["AFC East", "AFC North", "AFC South", "AFC West", "NFC East", "NFC North", "NFC South", "NFC West"].map((div) => {
+              {["AFC North", "AFC South", "AFC East", "AFC West", "NFC North", "NFC South", "NFC East", "NFC West"].map((div) => {
               const [conf, divName] = div.split(" ");
               const abbrs = (window.TEAMS_BY_DIVISION[`${conf} ${divName}`] || []).slice().sort((a, b) => {
                 const ta = window.TEAMS[a], tb = window.TEAMS[b];

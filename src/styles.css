@@ -1565,8 +1565,6 @@ a.topnav .tab-graph, .topnav a.tab-graph {
 .mode-pill.disabled {
   opacity: 0.35;
   cursor: default;
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
 }
 .mode-pill:disabled { cursor: default; }
 
@@ -1858,14 +1856,15 @@ a.topnav .tab-graph, .topnav a.tab-graph {
 /* ═══════════════════════════════════════════════════════════════════════
    STANDINGS
 ═══════════════════════════════════════════════════════════════════════ */
-.standings-grid {
+/* Playoff picture row — AFC & NFC brackets side by side */
+.brackets-row {
   display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 28px;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 28px;
 }
-@media (max-width: 1080px) {
-  .standings-grid { grid-template-columns: 1fr; }
-}
+@media (max-width: 760px) { .brackets-row { grid-template-columns: 1fr; } }
+
 .conf-block { margin-bottom: 32px; animation: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   animation-delay: var(--section-delay, 0ms);
 }
@@ -1878,6 +1877,29 @@ a.topnav .tab-graph, .topnav a.tab-graph {
   color: var(--text-muted);
   margin: 0 0 14px;
 }
+/* 4 division tables in a single horizontal row */
+.div-tables-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+@media (max-width: 1100px) { .div-tables-row { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px)  { .div-tables-row { grid-template-columns: 1fr; } }
+
+/* Compact div-row used inside the 4-col grid.
+   - Drops the strength bar and city name to save horizontal space.
+   - Removes the 88 px minimum on the seed-cell so You/GB always fit.
+   - Only applies when the grid is actually at 4 columns (> 1100 px). */
+@media (min-width: 1101px) {
+  .div-tables-row .div-row {
+    grid-template-columns: 18px 10px minmax(0, 1fr) 40px auto;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  .div-tables-row .div-row .strength-cell { display: none; }
+  .div-tables-row .div-row .city { display: none; }
+}
+/* Legacy 2-col layout kept for any other usages */
 .div-tables {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1908,7 +1930,7 @@ a.topnav .tab-graph, .topnav a.tab-graph {
 .div-table-rows { display: flex; flex-direction: column; }
 .div-row {
   display: grid;
-  grid-template-columns: 20px 12px minmax(0, 1fr) 48px 72px minmax(88px, auto);
+  grid-template-columns: 20px 12px minmax(0, 1fr) 48px 72px auto;
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
@@ -2004,7 +2026,8 @@ a.topnav .tab-graph, .topnav a.tab-graph {
   line-height: 1.5;
   text-transform: uppercase;
 }
-.tb-procs { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; display: grid; gap: 12px; }
+.tb-procs { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 760px) { .tb-procs { grid-template-columns: 1fr; } }
 .tb-proc-block {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -2104,7 +2127,7 @@ a.topnav .tab-graph, .topnav a.tab-graph {
   opacity: 0.85;
 }
 
-.standings-side { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 88px; align-self: start; }
+.standings-side { display: flex; flex-direction: column; gap: 16px; }
 .bracket-card {
   background: var(--surface);
   border: 1px solid var(--border);

@@ -19,6 +19,7 @@ import type { Core } from "cytoscape";
 import type { UGM } from "@g3t/core";
 import { CytoscapeCanvas } from "@g3t/react/views";
 import { ContextMenuManager } from "@g3t/react/controls";
+import type { MenuTarget } from "@g3t/react/controls";
 import { useSelectionStore } from "@g3t/react/state";
 import type { GraphData, GraphNode, GraphEdge } from "../types";
 
@@ -273,7 +274,7 @@ export interface PlayoffGraphProps {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGraphProps) {
-  const { selectedNodeIds, selectedEdgeIds, selectNodes, selectEdges } =
+  const { selectedNodeIds, selectNodes, selectEdges } =
     useSelectionStore();
 
   // ── Filter state ─────────────────────────────────────────────────────────
@@ -292,7 +293,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
   const firstNodeRef = useRef<string | null>(null);
   const [legendPos, setLegendPos] = useState({ x: 10, y: 60 });
   const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
-  const legendRef = useRef<HTMLDivElement | null>(null);
+  const legendRef = useRef<HTMLDivElement>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
   // Pinned node: when an edge connected to the active node is tapped, remember
   // the node so its edges stay visible even if the store clears selectedNodeIds.
@@ -329,15 +330,15 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         id: "view-team",
         label: "View playoff picture",
         icon: "🏈",
-        filter: (t) => t.type === "node",
-        action: (t) => { if (t.id) selectNodes([t.id]); },
+        filter: (t: MenuTarget) => t.type === "node",
+        action: (t: MenuTarget) => { if (t.id) selectNodes([t.id]); },
       },
       {
         id: "view-game",
         label: "View game details",
         icon: "📊",
-        filter: (t) => t.type === "edge",
-        action: (t) => { if (t.id) selectEdges([t.id]); },
+        filter: (t: MenuTarget) => t.type === "edge",
+        action: (t: MenuTarget) => { if (t.id) selectEdges([t.id]); },
       },
     ]);
     menuManagerRef.current = mgr;
@@ -854,7 +855,7 @@ const LEGEND_EDGE_ITEMS = [
 function PlayoffLegend({ pos, onDragStart, legendRef }: {
   pos: { x: number; y: number };
   onDragStart: (e: React.MouseEvent) => void;
-  legendRef: React.RefObject<HTMLDivElement | null>;
+  legendRef: React.RefObject<HTMLDivElement>;
 }) {
   return (
     <div
