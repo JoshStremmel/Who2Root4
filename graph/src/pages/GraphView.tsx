@@ -35,6 +35,20 @@ function getInitialTeam(): string {
   }
 }
 
+function getTweakPref<T>(key: string, fallback: T): T {
+  try {
+    const prefs = JSON.parse(localStorage.getItem("w2r4_tweaks") ?? "{}");
+    return (prefs[key] as T) ?? fallback;
+  } catch { return fallback; }
+}
+
+function saveTweakPref(key: string, value: unknown): void {
+  try {
+    const prefs = JSON.parse(localStorage.getItem("w2r4_tweaks") ?? "{}");
+    localStorage.setItem("w2r4_tweaks", JSON.stringify({ ...prefs, [key]: value }));
+  } catch { /* ignore */ }
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 type SeasonLoad =
@@ -45,7 +59,8 @@ type SeasonLoad =
 
 export function GraphView() {
   const [team] = useState(getInitialTeam);
-  const [week, setWeek] = useState<number | null>(null); // null = current week
+  const [week, setWeek] = useState<number | null>(() => getTweakPref<number | null>("week", null));
+  const [mode, setMode] = useState<string>(() => getTweakPref("mode", "overall"));
 
   const [seasonLoad, setSeasonLoad] = useState<SeasonLoad>({ status: "idle" });
   const [aggData, setAggData] = useState<AggregatedData | null>(null);
@@ -56,13 +71,10 @@ export function GraphView() {
 
   // Apply stored theme on mount
   useEffect(() => {
-    try {
-      const prefs = JSON.parse(localStorage.getItem("w2r4_tweaks") ?? "{}");
-      const dark = (prefs.theme ?? "light") === "dark";
-      setIsDark(dark);
-      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-      setTheme(dark ? "dark" : "light");
-    } catch { /* ignore */ }
+    const dark = getTweakPref("theme", "light") === "dark";
+    setIsDark(dark);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    setTheme(dark ? "dark" : "light");
   }, [setTheme]);
 
   const toggleTheme = useCallback(() => {
@@ -71,10 +83,7 @@ export function GraphView() {
     const theme = next ? "dark" : "light";
     document.documentElement.setAttribute("data-theme", theme);
     setTheme(theme);
-    try {
-      const prefs = JSON.parse(localStorage.getItem("w2r4_tweaks") ?? "{}");
-      localStorage.setItem("w2r4_tweaks", JSON.stringify({ ...prefs, theme }));
-    } catch { /* ignore */ }
+    saveTweakPref("theme", theme);
   }, [isDark, setTheme]);
 
   // Fetch season data once on mount
@@ -93,12 +102,22 @@ export function GraphView() {
       });
   }, []);
 
-  // Build UGM + GraphData synchronously whenever team / week / data changes
+  const handleWeekChange = useCallback((w: number | null) => {
+    setWeek(w);
+    saveTweakPref("week", w);
+  }, []);
+
+  const handleModeChange = useCallback((m: string) => {
+    setMode(m);
+    saveTweakPref("mode", m);
+  }, []);
+
+  // Build UGM + GraphData synchronously whenever team / week / mode / data changes
   const computed = useMemo((): { ugm: UGM; graphData: GraphData } | null => {
     if (!aggData) return null;
     const loaded = buildLoadedData(aggData, week ?? undefined);
-    return buildGraphData(loaded, team);
-  }, [aggData, team, week]);
+    return buildGraphData(loaded, team, mode);
+  }, [aggData, team, week, mode]);
 
   const season = computed?.graphData.meta.season ?? aggData?.latestSeason ?? new Date().getFullYear();
   const isPreseason = computed?.graphData.meta.isPreseason ?? false;
@@ -120,7 +139,7 @@ export function GraphView() {
           <label style={pageStyles.selectorLabel}>
             <select
               value={week ?? ""}
-              onChange={(e) => setWeek(e.target.value === "" ? null : Number(e.target.value))}
+              onChange={(e) => handleWeekChange(e.target.value === "" ? null : Number(e.target.value))}
               style={pageStyles.select}
             >
               <option value="">Current</option>
@@ -186,7 +205,7 @@ export function GraphView() {
         )}
 
         {seasonLoad.status === "ready" && computed && computed.graphData.nodes.length > 0 && (
-          <PlayoffGraph ugm={computed.ugm} graphData={computed.graphData} />
+          <PlayoffGraph ugm={computed.ugm} graphData={computed.graphData} mode={mode} onModeChange={handleModeChange} />
         )}
       </div>
     </div>

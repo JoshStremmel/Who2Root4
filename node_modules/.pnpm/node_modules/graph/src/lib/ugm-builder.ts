@@ -148,8 +148,7 @@ function playoffProbability(abbr: string, standing: StandingEntry | undefined, t
 // (and the symmetric edge for B).  One edge per (type, source, target) pair —
 // the highest-scoring one wins when multiple games produce the same key.
 
-function computeAllPlayoffEdges(loaded: LoadedData): GraphEdge[] {
-  const mode = "overall";
+function computeAllPlayoffEdges(loaded: LoadedData, mode: string): GraphEdge[] {
   const dislikes: string[] = [];
   const edgeMap = new Map<string, GraphEdge>();
 
@@ -175,25 +174,7 @@ function computeAllPlayoffEdges(loaded: LoadedData): GraphEdge[] {
       const awayHelps = modeScore(g.away, g.home, fav, mode, dislikes, loaded.teams, loaded);
       const net = homeHelps - awayHelps;
 
-      if (Math.abs(net) < 0.05) {
-        // Both teams are roughly equal rivals — neutral impact.
-        const maxHelp = Math.max(homeHelps, awayHelps);
-        if (maxHelp >= 0.15) {
-          const score = Math.min(maxHelp + sBonus, 1.0);
-          upsert({
-            id: `neu_${g.id}_${abbr}`,
-            source: `urn:nfl:team:${g.home}`,
-            target: `urn:nfl:team:${abbr}`,
-            type: "neutral",
-            impactScore: score,
-            week: loaded.weekMeta.week,
-            gameId: g.id,
-            recommendationScore: Math.round(score * 100),
-            reasoning: `${g.home} vs ${g.away}: balanced impact on ${abbr}`,
-          });
-        }
-        continue;
-      }
+      if (Math.abs(net) < 0.05) continue;
 
       const score = Math.min(Math.abs(net) + sBonus, 1.0);
       const helper = net > 0 ? g.home : g.away;  // team whose win helps abbr
@@ -269,6 +250,7 @@ function computeWinsOverEdges(
 export function buildGraphData(
   loaded: LoadedData,
   favAbbr = "",
+  mode = "overall",
 ): { ugm: UGM; graphData: GraphData } {
   const standings = computeStandings(loaded.teams);
   const wr = loaded.weekMeta.weeksRemaining;
@@ -324,7 +306,7 @@ export function buildGraphData(
 
   // Build edges: playoff impact edges + head-to-head winsOver edges
   const edges = [
-    ...computeAllPlayoffEdges(loaded),
+    ...computeAllPlayoffEdges(loaded, mode),
     ...computeWinsOverEdges(loaded, teamsInWeek),
   ];
 
@@ -367,6 +349,7 @@ export function buildGraphData(
   const graphData: GraphData = {
     nodes,
     edges,
+    games: loaded.schedule.map(g => ({ id: g.id, home: g.home, away: g.away })),
     meta: {
       favoriteTeam: favAbbr,
       week: loaded.weekMeta.week,

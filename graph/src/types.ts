@@ -21,7 +21,7 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  type: "improvesOdds" | "hurtsOdds" | "neutral" | "winsOver";
+  type: "improvesOdds" | "hurtsOdds" | "winsOver";
   impactScore: number;
   week: number;
   gameId: string;
@@ -37,8 +37,15 @@ export interface GraphMeta {
   gameCount: number;
 }
 
+export interface GraphGame {
+  id: string;
+  home: string;
+  away: string;
+}
+
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  games: GraphGame[];
   meta: GraphMeta;
 }

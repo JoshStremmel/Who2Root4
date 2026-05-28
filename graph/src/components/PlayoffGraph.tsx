@@ -153,10 +153,6 @@ const PLAYOFF_GRAPH_STYLESHEET = [
     style: { "line-color": "#f97316", "target-arrow-color": "#f97316" },
   },
   {
-    selector: 'edge[type = "neutral"]',
-    style: { "line-color": "#1e3a8a", "target-arrow-color": "#1e3a8a" },
-  },
-  {
     selector: 'edge[type = "winsOver"]',
     style: { "line-color": "#6b7280", "target-arrow-color": "#6b7280" },
   },
@@ -183,11 +179,13 @@ const LEGEND_ENCODING = {
 export interface PlayoffGraphProps {
   ugm: UGM;
   graphData: GraphData;
+  mode: string;
+  onModeChange: (m: string) => void;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
+export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGraphProps) {
   const { selectedNodeIds, selectedEdgeIds, selectNodes, selectEdges } =
     useSelectionStore();
 
@@ -308,11 +306,11 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     }
 
     // improvesOdds/hurtsOdds: always hidden globally; reveal per direction toggle
-    cy.edges('[type = "improvesOdds"],[type = "hurtsOdds"],[type = "neutral"]').style("display", "none");
+    cy.edges('[type = "improvesOdds"],[type = "hurtsOdds"]').style("display", "none");
     if (firstNode) {
       const sel = cy.getElementById(firstNode);
       if (sel.length) {
-        const oddsSelector = '[type = "improvesOdds"],[type = "hurtsOdds"],[type = "neutral"]';
+        const oddsSelector = '[type = "improvesOdds"],[type = "hurtsOdds"]';
         if (showImpactsOnTeam) {
           sel.incomers(oddsSelector).style("display", "element");
         }
@@ -462,9 +460,12 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
             <div style={styles.bottomResizeHandle} onMouseDown={startBottomResize} />
           )}
           <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-            <div style={{ flex: 1, overflow: "hidden" }}>
-              <ImpactChart graphData={graphData} />
-            </div>
+            <ImpactChart
+              graphData={graphData}
+              selectedNodeId={firstNode}
+              mode={mode}
+              onModeChange={onModeChange}
+            />
             <div style={styles.legendPanel}>
               <CanvasLegend ugm={ugm} encoding={LEGEND_ENCODING} />
               <EdgeTypeLegend />
@@ -605,7 +606,6 @@ const chipStyles = {
 function edgeTypeColor(type: string): string {
   if (type === "improvesOdds") return "#38bdf8";
   if (type === "hurtsOdds")    return "#f97316";
-  if (type === "neutral")      return "#1e3a8a";
   if (type === "winsOver")     return "#6b7280";
   return "#9ca3af";
 }
@@ -651,10 +651,9 @@ function EdgeTypeLegend() {
   const items = [
     { color: "#38bdf8", label: "Improves Odds" },
     { color: "#f97316", label: "Hurts Odds"    },
-    { color: "#1e3a8a", label: "Neutral"        },
-    { color: "#22c55e", label: "Win (selected)" },
+    { color: "#22c55e", label: "Win (selected)"},
     { color: "#ef4444", label: "Loss (selected)"},
-    { color: "#6b7280", label: "Wins Over"      },
+    { color: "#6b7280", label: "Wins Over"     },
   ];
   return (
     <div style={{ paddingTop: 8, marginTop: 8, borderTop: "1px solid var(--border)", fontSize: 11 }}>
@@ -837,65 +836,135 @@ function EdgeDetail({ edge }: { edge: GraphEdge }) {
 }
 
 // ── ImpactChart ───────────────────────────────────────────────────────────────
-// SVG bar chart: one bar per game, sorted by recommendationScore descending.
+// Left panel: mode selector. Right panel: scrollable SVG showing every game
+// this week, colored by which team to root for relative to the selected node.
 
-function ImpactChart({ graphData }: { graphData: GraphData }) {
-  const CHART_H   = 110;
-  const LABEL_H   = 52;
-  const BAR_W     = 38;
-  const GAP       = 6;
+const MODES = [
+  { key: "division",      label: "Division" },
+  { key: "wildcard",      label: "Wild Card" },
+  { key: "conf_one_seed", label: "#1 Seed"   },
+  { key: "overall",       label: "Overall"   },
+  { key: "tank",          label: "Tank"      },
+] as const;
+
+function ImpactChart({ graphData, selectedNodeId, mode, onModeChange }: {
+  graphData: GraphData;
+  selectedNodeId: string | null;
+  mode: string;
+  onModeChange: (m: string) => void;
+}) {
+  const CHART_H   = 100;
+  const LABEL_H   = 54;
   const SCORE_PAD = 14;
+  const BAR_W     = 36;
+  const GAP       = 5;
 
-  const edges = [...graphData.edges]
-    .filter(e => e.recommendationScore > 0)
-    .sort((a, b) => b.recommendationScore - a.recommendationScore)
-    .slice(0, 14);
+  const favId = graphData.meta.favoriteTeam
+    ? `urn:nfl:team:${graphData.meta.favoriteTeam}`
+    : null;
+  const effectiveId   = selectedNodeId ?? favId;
+  const effectiveAbbr = effectiveId?.split(":").pop() ?? null;
 
-  if (edges.length === 0) {
-    return (
-      <div style={{ padding: "12px 16px", color: "var(--text-faint)", fontSize: 12 }}>
-        This Week's Game Impact Scores — no games with impact data
-      </div>
+  const gameImpacts = [...graphData.games].map(game => {
+    const isOwnGame = effectiveAbbr != null &&
+      (game.home === effectiveAbbr || game.away === effectiveAbbr);
+    if (isOwnGame) {
+      return { game, rootFor: effectiveAbbr!, score: 1.0, isOwnGame: true };
+    }
+    if (!effectiveId) return { game, rootFor: null as string | null, score: 0, isOwnGame: false };
+    const edge = graphData.edges.find(
+      e => e.gameId === game.id && e.target === effectiveId && e.type === "improvesOdds"
     );
-  }
+    return {
+      game,
+      rootFor: edge ? edge.source.split(":").pop()! : null,
+      score:   edge ? edge.impactScore : 0,
+      isOwnGame: false,
+    };
+  }).sort((a, b) => b.score - a.score);
 
-  const maxScore = Math.max(...edges.map(e => e.recommendationScore), 1);
-  const svgW = edges.length * (BAR_W + GAP) + GAP;
+  const maxScore = Math.max(...gameImpacts.map(g => g.score), 0.01);
+  const svgW = gameImpacts.length * (BAR_W + GAP) + GAP;
   const svgH = CHART_H + LABEL_H + SCORE_PAD;
 
   return (
-    <div style={{ padding: "6px 12px 4px", overflowX: "auto" }}>
-      <div style={{ fontWeight: 700, fontSize: 11, marginBottom: 4, color: "var(--text-muted)", letterSpacing: "0.04em" }}>
-        THIS WEEK'S GAME IMPACT
+    <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+      {/* Mode selector */}
+      <div style={{
+        width: 82, flexShrink: 0, borderRight: "1px solid var(--border)",
+        display: "flex", flexDirection: "column", gap: 3, padding: "6px 6px",
+        overflowY: "auto",
+      }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-faint)",
+          letterSpacing: "0.05em", marginBottom: 2 }}>
+          MODE
+        </div>
+        {MODES.map(m => (
+          <button
+            key={m.key}
+            onClick={() => onModeChange(m.key)}
+            style={{
+              padding: "5px 6px", borderRadius: 6,
+              border: `1.5px solid ${mode === m.key ? "var(--accent, #3b82f6)" : "var(--border)"}`,
+              background: mode === m.key ? "var(--accent, #3b82f6)" : "transparent",
+              color: mode === m.key ? "#fff" : "var(--text-muted)",
+              fontSize: 11, fontWeight: 600, cursor: "pointer",
+              textAlign: "left" as const, fontFamily: "var(--font-data)",
+              transition: "all 0.12s",
+            }}
+          >
+            {m.label}
+          </button>
+        ))}
       </div>
-      <svg width={svgW} height={svgH} style={{ display: "block" }}>
-        {edges.map((e, i) => {
-          const rootFor = e.source.split(":").pop() ?? "";
-          const against = e.target.split(":").pop() ?? "";
-          const barH = Math.max(4, (e.recommendationScore / maxScore) * CHART_H);
-          const x    = GAP + i * (BAR_W + GAP);
-          const y    = CHART_H - barH;
-          const color = edgeTypeColor(e.type);
-          const lx   = x + BAR_W / 2;
-          const ly   = CHART_H + 10;
-          return (
-            <g key={e.id}>
-              <rect x={x} y={y} width={BAR_W} height={barH} fill={color} rx={3} />
-              <text x={lx} y={CHART_H - barH - 3} textAnchor="middle" fontSize={8} fill="var(--text)">
-                {e.recommendationScore}%
-              </text>
-              {/* X-axis label: "ROOT vs OPP", rotated 40° */}
-              <text
-                x={lx} y={ly} textAnchor="end"
-                fontSize={8} fill="var(--text-muted)"
-                transform={`rotate(-40, ${lx}, ${ly})`}
-              >
-                {rootFor} vs {against}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+
+      {/* Chart */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column",
+        overflow: "hidden", padding: "6px 0 0 8px" }}>
+        <div style={{ fontWeight: 700, fontSize: 11, marginBottom: 3,
+          color: "var(--text-muted)", letterSpacing: "0.04em", flexShrink: 0 }}>
+          THIS WEEK&apos;S GAME IMPACT
+          {effectiveAbbr && (
+            <span style={{ fontWeight: 400, opacity: 0.65 }}> · {effectiveAbbr}</span>
+          )}
+        </div>
+        {gameImpacts.length === 0 ? (
+          <div style={{ color: "var(--text-faint)", fontSize: 11, padding: 8 }}>
+            No games scheduled
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto", overflowY: "hidden", flex: 1 }}>
+            <svg width={svgW} height={svgH} style={{ display: "block" }}>
+              {gameImpacts.map(({ game, rootFor, score, isOwnGame }, i) => {
+                const barH  = Math.max(4, (score / maxScore) * CHART_H);
+                const x     = GAP + i * (BAR_W + GAP);
+                const y     = CHART_H - barH;
+                const lx    = x + BAR_W / 2;
+                const ly    = CHART_H + 8;
+                const color = isOwnGame ? "#f59e0b" : rootFor ? "#22c55e" : "#4b5563";
+                const pct   = score > 0.005 ? `${Math.round(score * 100)}%` : "";
+                const label = rootFor ?? "—";
+                return (
+                  <g key={game.id}>
+                    <rect x={x} y={y} width={BAR_W} height={barH} fill={color} rx={3} />
+                    {pct && (
+                      <text x={lx} y={y - 3} textAnchor="middle"
+                        fontSize={8} fill="var(--text)">{pct}</text>
+                    )}
+                    <text x={lx} y={ly} textAnchor="middle"
+                      fontSize={10} fontWeight="700" fill={color}>{label}</text>
+                    <text x={lx} y={ly + 12} textAnchor="end" fontSize={8}
+                      fill="var(--text-muted)"
+                      transform={`rotate(-40, ${lx}, ${ly + 12})`}>
+                      {game.away} vs {game.home}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
