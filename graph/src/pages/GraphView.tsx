@@ -144,52 +144,49 @@ export function GraphView() {
     <div style={pageStyles.root}>
       {/* Top nav bar */}
       <header style={pageStyles.header}>
-        {/* Brand */}
+        {/* Left: brand — matches main page .topnav .brand */}
         <div style={pageStyles.brand}>
-          <span style={pageStyles.brandMark}>W</span>
           <span style={pageStyles.brandWord}>
-            Who2Root4<sup className="w2r4-tm">TM</sup>
+            Who2Root4<sup style={pageStyles.brandTm}>TM</sup>
           </span>
-          <span style={pageStyles.brandSub}> · Graph View</span>
+          <span style={pageStyles.brandSub}>· Graph View</span>
         </div>
 
-        {/* Team selector */}
-        <label style={pageStyles.label}>
-          Team
-          <select
-            value={team}
-            onChange={(e) => setTeam(e.target.value)}
-            style={pageStyles.select}
-          >
-            {ALL_TEAMS.map((t) => (
-              <option key={t.abbr} value={t.abbr}>
-                {t.abbr} — {t.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* Center: team + week selectors in a pill container (like the tab bar) */}
+        <div style={pageStyles.selectorGroup}>
+          <label style={pageStyles.selectorLabel}>
+            <span style={pageStyles.selectorLabelText}>Team</span>
+            <select
+              value={team}
+              onChange={(e) => setTeam(e.target.value)}
+              style={pageStyles.select}
+            >
+              {ALL_TEAMS.map((t) => (
+                <option key={t.abbr} value={t.abbr}>
+                  {t.abbr} — {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span style={pageStyles.selectorDivider} />
+          <label style={pageStyles.selectorLabel}>
+            <span style={pageStyles.selectorLabelText}>Week</span>
+            <select
+              value={week ?? ""}
+              onChange={(e) => setWeek(e.target.value === "" ? null : Number(e.target.value))}
+              style={pageStyles.select}
+            >
+              <option value="">Current</option>
+              {WEEKS.map((w) => (
+                <option key={w} value={w}>Week {w}</option>
+              ))}
+            </select>
+          </label>
+        </div>
 
-        {/* Week selector */}
-        <label style={pageStyles.label}>
-          Week
-          <select
-            value={week ?? ""}
-            onChange={(e) => setWeek(e.target.value === "" ? null : Number(e.target.value))}
-            style={pageStyles.select}
-          >
-            <option value="">Current</option>
-            {WEEKS.map((w) => (
-              <option key={w} value={w}>Week {w}</option>
-            ))}
-          </select>
-        </label>
-
-        <span style={{ color: "var(--text-faint)", fontSize: 12 }}>
-          {season} season
-        </span>
-
-        {/* Back link + dark mode toggle (right side) */}
+        {/* Right: season + back link + theme toggle */}
         <div style={pageStyles.navRight}>
+          <span style={pageStyles.seasonText}>{season} season</span>
           <a href="../" style={pageStyles.backLink} title="Back to main app" aria-label="Back">
             ← Main
           </a>
@@ -305,47 +302,48 @@ const pageStyles = {
     overflow:      "hidden",
     fontFamily:    "var(--font-data)",
   },
+  // 3-column grid matching main page .topnav exactly
   header: {
-    position:              "sticky" as const,
-    top:                   0,
-    zIndex:                30,
-    display:               "flex",
-    alignItems:            "center",
-    gap:                   14,
-    height:                56,
-    padding:               "0 28px",
-    borderBottom:          "1px solid var(--border)",
-    background:            "color-mix(in oklch, var(--bg) 78%, transparent)",
-    backdropFilter:        "saturate(180%) blur(18px)",
-    WebkitBackdropFilter:  "saturate(180%) blur(18px)",
-    flexShrink:            0,
-    flexWrap:              "wrap" as const,
+    position:             "sticky" as const,
+    top:                  0,
+    zIndex:               30,
+    display:              "grid",
+    gridTemplateColumns:  "1fr auto 1fr",
+    alignItems:           "center",
+    padding:              "14px 28px",
+    borderBottom:         "1px solid var(--border)",
+    background:           "color-mix(in oklch, var(--bg) 78%, transparent)",
+    backdropFilter:       "saturate(180%) blur(18px)",
+    WebkitBackdropFilter: "saturate(180%) blur(18px)",
+    flexShrink:           0,
   },
+  // matches .topnav .brand
   brand: {
-    display:    "flex",
-    alignItems: "center",
-    gap:        8,
-  },
-  brandMark: {
-    width:        28,
-    height:       28,
-    borderRadius: 7,
-    background:   "var(--accent)",
-    display:      "grid",
-    placeItems:   "center",
-    color:        "white",
-    fontFamily:   "var(--font-display)",
-    fontWeight:   800,
-    fontSize:     14,
-    letterSpacing: "0.02em",
-    flexShrink:   0,
-  },
-  brandWord: {
+    display:       "flex",
+    alignItems:    "center",
+    gap:           6,
     fontFamily:    "var(--font-heading)",
     fontWeight:    700,
-    fontSize:      20,
     letterSpacing: "-0.01em",
+    fontSize:      20,
     color:         "var(--text)",
+  },
+  brandWord: {
+    fontFamily:    "inherit",
+    fontWeight:    "inherit" as const,
+    fontSize:      "inherit",
+    letterSpacing: "inherit",
+    color:         "inherit",
+  },
+  brandTm: {
+    fontSize:      "0.42em" as unknown as number,
+    verticalAlign: "super" as const,
+    letterSpacing: 0,
+    fontWeight:    600,
+    marginLeft:    "0.12em",
+    opacity:       0.6,
+    fontFamily:    "var(--font-data)",
+    lineHeight:    1,
   },
   brandSub: {
     fontFamily:    "var(--font-data)",
@@ -354,52 +352,90 @@ const pageStyles = {
     color:         "var(--text-faint)",
     letterSpacing: 0,
     opacity:       0.85,
+    marginLeft:    6,
   },
+  // pill container matching .topnav .tabs
+  selectorGroup: {
+    display:      "flex",
+    alignItems:   "center",
+    gap:          0,
+    background:   "var(--surface)",
+    border:       "1px solid var(--border)",
+    borderRadius: 999,
+    padding:      "4px",
+  },
+  selectorLabel: {
+    display:      "flex",
+    alignItems:   "center",
+    gap:          5,
+    padding:      "5px 12px",
+    borderRadius: 999,
+    cursor:       "default" as const,
+  },
+  selectorLabelText: {
+    fontSize:   13,
+    fontWeight: 500,
+    color:      "var(--text-muted)",
+  },
+  selectorDivider: {
+    width:      1,
+    height:     16,
+    background: "var(--border)",
+    flexShrink: 0,
+    margin:     "0 2px",
+  },
+  select: {
+    background:  "transparent",
+    border:      "none",
+    color:       "var(--text)",
+    fontSize:    13,
+    fontFamily:  "var(--font-data)",
+    fontWeight:  500,
+    cursor:      "pointer",
+    outline:     "none",
+    padding:     "0 2px",
+  },
+  // right column — matches .topnav .right
   navRight: {
-    marginLeft:  "auto",
+    justifySelf: "end" as const,
     display:     "flex",
     alignItems:  "center",
-    gap:         8,
+    gap:         10,
   },
+  seasonText: {
+    color:      "var(--text-faint)",
+    fontSize:   13,
+    fontFamily: "var(--font-data)",
+    opacity:    0.85,
+  },
+  // mirrors .topnav a.tab-graph
   backLink: {
-    color:          "var(--text-muted)",
+    display:        "inline-flex",
+    alignItems:     "center",
+    gap:            4,
+    color:          "var(--accent-ink)",
     textDecoration: "none",
     fontSize:       13,
     fontWeight:     600,
-    padding:        "5px 10px",
+    padding:        "5px 12px",
     borderRadius:   999,
-    border:         "1px solid var(--border)",
-    background:     "var(--surface)",
+    border:         "1px solid color-mix(in oklch, var(--accent) 40%, transparent)",
+    fontFamily:     "var(--font-data)",
     whiteSpace:     "nowrap" as const,
   },
-  label: {
-    display:    "flex",
-    alignItems: "center",
-    gap:        6,
-    fontSize:   13,
-    fontWeight: 600,
-    color:      "var(--text-muted)",
-  },
-  select: {
-    padding:      "5px 8px",
-    borderRadius: 8,
+  // matches .icon-btn
+  themeBtn: {
+    width:        34,
+    height:       34,
     border:       "1px solid var(--border)",
     background:   "var(--surface)",
-    color:        "var(--text)",
-    fontSize:     13,
-    fontFamily:   "var(--font-data)",
-  },
-  themeBtn: {
+    borderRadius: 10,
     display:      "grid",
     placeItems:   "center",
-    width:        32,
-    height:       32,
-    padding:      0,
-    borderRadius: 8,
-    border:       "1px solid var(--border)",
-    background:   "transparent",
-    cursor:       "pointer",
     color:        "var(--text-muted)",
+    cursor:       "pointer",
+    padding:      0,
+    flexShrink:   0,
   },
   preseasonBanner: {
     background:   "oklch(0.96 0.045 60)",
