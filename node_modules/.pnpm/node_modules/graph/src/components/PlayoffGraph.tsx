@@ -192,9 +192,7 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
   const [visibleKinds, setVisibleKinds] = useState(
     new Set(["division_leader", "wildcard", "in_hunt", "eliminated"]),
   );
-  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState(
-    new Set(["improvesOdds", "hurtsOdds", "winsOver"]),
-  );
+  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState(new Set(["winsOver"]));
   const [only1Seed, setOnly1Seed] = useState(false);
 
   function toggleConf(c: string) {
@@ -267,26 +265,6 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     setTimeout(() => { applyTeamPositions(cy); }, 50);
   }, [ugm]);
 
-  // Apply filter visibility changes
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    cy.elements().removeStyle("display");
-    const toHideNodes = cy.nodes().filter(node => {
-      const conf = node.data("conference") as string;
-      const kind = node.data("standingKind") as string;
-      if (!visibleConfs.has(conf)) return true;
-      if (!visibleKinds.has(kind)) return true;
-      if (only1Seed && !node.data("is1SeedContender")) return true;
-      return false;
-    });
-    toHideNodes.style("display", "none");
-    toHideNodes.connectedEdges().style("display", "none");
-    cy.edges()
-      .filter(edge => !visibleEdgeTypes.has(edge.data("type") as string))
-      .style("display", "none");
-  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes]);
-
   // Selected element
   const firstNode = [...selectedNodeIds][0] ?? null;
   const firstEdge = [...selectedEdgeIds][0] ?? null;
@@ -297,23 +275,59 @@ export function PlayoffGraph({ ugm, graphData }: PlayoffGraphProps) {
     ? graphData.edges.find(e => e.id === firstEdge) ?? null
     : null;
 
-  // Recolor winsOver edges for selected team: outgoing=green (win), incoming=red (loss)
+  // Combined visibility + coloring effect.
+  // improvesOdds/hurtsOdds are hidden by default; only the selected node's
+  // connected ones are revealed.  winsOver is toggle-controlled and colored
+  // green (wins) / red (losses) relative to the selected node.
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
+
+    cy.elements().removeStyle("display");
+
+    // Hide filtered-out nodes
+    const toHideNodes = cy.nodes().filter(node => {
+      const conf = node.data("conference") as string;
+      const kind = node.data("standingKind") as string;
+      if (!visibleConfs.has(conf)) return true;
+      if (!visibleKinds.has(kind)) return true;
+      if (only1Seed && !node.data("is1SeedContender")) return true;
+      return false;
+    });
+    toHideNodes.style("display", "none");
+
+    // winsOver: toggle-controlled
+    if (!visibleEdgeTypes.has("winsOver")) {
+      cy.edges('[type = "winsOver"]').style("display", "none");
+    }
+
+    // improvesOdds/hurtsOdds: always hidden; reveal only for selected node
+    cy.edges('[type = "improvesOdds"],[type = "hurtsOdds"]').style("display", "none");
+    if (firstNode) {
+      const sel = cy.getElementById(firstNode);
+      if (sel.length) {
+        sel.connectedEdges('[type = "improvesOdds"],[type = "hurtsOdds"]')
+          .style("display", "element");
+      }
+    }
+
+    // Re-hide any edge that touches a hidden node (overrides the reveal above)
+    toHideNodes.connectedEdges().style("display", "none");
+
+    // winsOver coloring: outgoing=green (win), incoming=red (loss)
     cy.edges('[type = "winsOver"]').removeStyle("line-color target-arrow-color");
     if (firstNode) {
-      const node = cy.getElementById(firstNode);
-      if (node.length) {
-        node.outgoers('edge[type = "winsOver"]').style({
+      const sel = cy.getElementById(firstNode);
+      if (sel.length) {
+        sel.outgoers('edge[type = "winsOver"]').style({
           "line-color": "#22c55e", "target-arrow-color": "#22c55e",
         });
-        node.incomers('edge[type = "winsOver"]').style({
+        sel.incomers('edge[type = "winsOver"]').style({
           "line-color": "#ef4444", "target-arrow-color": "#ef4444",
         });
       }
     }
-  }, [firstNode]);
+  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, firstNode]);
 
   // Responsive layout
   const [showChart, setShowChart] = useState(true);
@@ -466,9 +480,7 @@ const KIND_LABELS: { key: string; label: string }[] = [
 ];
 
 const EDGE_TYPE_LABELS: { key: string; label: string; color: string }[] = [
-  { key: "improvesOdds", label: "Improves Odds", color: "#38bdf8" },
-  { key: "hurtsOdds",    label: "Hurts Odds",    color: "#f97316" },
-  { key: "winsOver",     label: "Wins Over",     color: "#6b7280" },
+  { key: "winsOver", label: "Wins Over", color: "#6b7280" },
 ];
 
 function GraphFilter({
