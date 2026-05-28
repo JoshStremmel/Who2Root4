@@ -218,12 +218,12 @@ const PLAYOFF_GRAPH_STYLESHEET = [
     selector: "node[nodeLabel]",
     style: { label: "data(nodeLabel)" },
   },
-  // Size ← playoff probability (30–70 px)
+  // Size ← playoff probability, non-linear (prob^1.7): 0%→15px, 70%→62px, 100%→100px
   {
     selector: "node[playoffProbability]",
     style: {
-      width:  "mapData(playoffProbability, 0, 1, 30, 70)" as unknown as number,
-      height: "mapData(playoffProbability, 0, 1, 30, 70)" as unknown as number,
+      width:  ((ele: any) => { const p = ele.data("playoffProbability") ?? 0; return 15 + Math.pow(p, 1.7) * 85; }) as unknown as number,
+      height: ((ele: any) => { const p = ele.data("playoffProbability") ?? 0; return 15 + Math.pow(p, 1.7) * 85; }) as unknown as number,
     },
   },
   // Edge base — labels off by default, styled for when toggled on
@@ -491,8 +491,14 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         });
       }
     }
-    // Gray out nodes and edges not connected to the effective node or selected edge
-    if (effectiveNode) {
+    // Gray out: edge selection always takes priority — only the edge + its two
+    // endpoint nodes stay fully visible. Falls back to node-neighborhood when
+    // no edge is selected.
+    if (selectedEdge) {
+      const endpointIds = new Set([selectedEdge.source, selectedEdge.target]);
+      cy.nodes().filter(n => !endpointIds.has(n.id())).style("opacity", 0.15);
+      cy.edges().filter(e => e.id() !== selectedEdge.id).style("opacity", 0.15);
+    } else if (effectiveNode) {
       const sel = cy.getElementById(effectiveNode);
       if (sel.length) {
         const connectedIds = new Set<string>([effectiveNode]);
@@ -500,19 +506,11 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
           e.style("display") !== "none" &&
           (e.source().id() === effectiveNode || e.target().id() === effectiveNode)
         ).forEach(e => { connectedIds.add(e.source().id()); connectedIds.add(e.target().id()); });
-        // Dim non-connected nodes (including their conf glow via opacity)
-        cy.nodes().filter(n => !connectedIds.has(n.id()))
-          .style("opacity", 0.15);
-        // Dim all edges that don't directly touch the effective node
+        cy.nodes().filter(n => !connectedIds.has(n.id())).style("opacity", 0.15);
         cy.edges().filter(e =>
           e.source().id() !== effectiveNode && e.target().id() !== effectiveNode
         ).style("opacity", 0.15);
       }
-    } else if (selectedEdge) {
-      // Edge selected with no active node: highlight only the two endpoint nodes
-      const endpointIds = new Set([selectedEdge.source, selectedEdge.target]);
-      cy.nodes().filter(n => !endpointIds.has(n.id())).style("opacity", 0.15);
-      cy.edges().filter(e => e.id() !== selectedEdge.id).style("opacity", 0.15);
     }
 
     // Edge labels
