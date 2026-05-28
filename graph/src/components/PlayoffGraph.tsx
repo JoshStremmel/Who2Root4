@@ -480,7 +480,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         });
       }
     }
-    // Gray out nodes and edges not connected to the selected node
+    // Gray out nodes and edges not connected to the selected node or edge
     if (firstNode) {
       const sel = cy.getElementById(firstNode);
       if (sel.length) {
@@ -492,12 +492,16 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         // Dim non-connected nodes (including their conf glow via opacity)
         cy.nodes().filter(n => !connectedIds.has(n.id()))
           .style("opacity", 0.15);
-        // Dim edges where both endpoints are non-connected (same opacity as nodes)
+        // Dim all edges that don't directly touch the selected node
         cy.edges().filter(e =>
-          !connectedIds.has(e.source().id()) &&
-          !connectedIds.has(e.target().id())
+          e.source().id() !== firstNode && e.target().id() !== firstNode
         ).style("opacity", 0.15);
       }
+    } else if (selectedEdge) {
+      // Edge selected with no active node: highlight only the two endpoint nodes
+      const endpointIds = new Set([selectedEdge.source, selectedEdge.target]);
+      cy.nodes().filter(n => !endpointIds.has(n.id())).style("opacity", 0.15);
+      cy.edges().filter(e => e.id() !== selectedEdge.id).style("opacity", 0.15);
     }
 
     // Edge labels
@@ -513,7 +517,7 @@ export function PlayoffGraph({ ugm, graphData, mode, onModeChange }: PlayoffGrap
         }
       }
     }
-  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, firstNode, ugm,
+  }, [visibleConfs, visibleKinds, only1Seed, visibleEdgeTypes, firstNode, selectedEdge, ugm,
       showImpactsOnTeam, showTeamImpactOnOthers, showEdgeLabels]);
 
   // Responsive layout
