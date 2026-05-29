@@ -1,5 +1,5 @@
 {
-  "buildCommand": "pnpm --filter graph build && mkdir -p dist && cp index.html dist/ && cp -r src dist/",
+  "buildCommand": "pnpm --filter graph build && mkdir -p dist/ROOT4 && cp index.html dist/ && cp -r src dist/ && cp ROOT4/root4.js dist/ROOT4/",
   "outputDirectory": "dist",
   "installCommand": "git submodule update --init --recursive && pnpm install",
   "rewrites": [

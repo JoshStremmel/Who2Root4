@@ -17,7 +17,7 @@ export { DIVISIONS, ABBR_ALIAS, TEAM_COLOR_FALLBACK, normAbbr, winPct, buildTeam
 // ── Repo config ───────────────────────────────────────────────────────────────
 
 const GH_OWNER  = "JoshStremmel";
-const GH_REPO   = "Who2Root4";
+const GH_REPO   = "ROOT4";
 const GH_BRANCH = "main";
 const RAW_BASE  = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}`;
 
