@@ -1,6 +1,0 @@
-holonic>=0.5.0
-rdflib>=7.0.0
-requests>=2.31.0
-pytest>=8.0.0
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0

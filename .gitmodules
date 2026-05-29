@@ -1,3 +1,6 @@
 [submodule "g3-toolkit"]
 	path = g3-toolkit
 	url = https://github.com/zwelz3/g3-toolkit.git
+[submodule "ROOT4"]
+	path = ROOT4
+	url = https://github.com/JoshStremmel/ROOT4.git

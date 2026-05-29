@@ -16,11 +16,11 @@ import {
   winPct, buildTeamStrengths, computeTiebreakerReasons,
   computeStandings, availableModes, favTeamGame, ownGameImpact,
   computeRecommendations, computeScenarios,
-} from "./root4.js";
+} from "../ROOT4/root4.js";
 
 /* ─── Repo config ───────────────────────────────────────────────────────── */
 const GH_OWNER  = "JoshStremmel";
-const GH_REPO   = "Who2Root4";
+const GH_REPO   = "ROOT4";
 const GH_BRANCH = "main";
 const RAW_BASE  = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}`;
 
