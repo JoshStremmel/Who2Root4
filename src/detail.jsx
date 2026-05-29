@@ -29,9 +29,6 @@ function GameDetail({ rec, fav, onClose }) {
             <div className="eyebrow">Game detail · {rec.kickoff} · {rec.network}</div>
             <h2>Why this game matters</h2>
           </div>
-          <div className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            #{rec.gameId.toUpperCase()}
-          </div>
         </div>
 
         <div className="detail-tags">
@@ -110,7 +107,6 @@ function GameDetail({ rec, fav, onClose }) {
 
         <div style={{ marginTop: 22, display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <button className="btn ghost" onClick={onClose}>Close</button>
-          <button className="btn">Add to watch list</button>
         </div>
       </div>
     </div>

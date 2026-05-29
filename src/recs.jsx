@@ -121,7 +121,6 @@ function YourGame({ favAbbr, mode, onOpen }) {
       onKeyDown={handleKey}
       aria-label={clickable ? `Open details for ${fav.name} ${data.isHome ? "vs" : "at"} ${opp.name}` : undefined}
     >
-      <div className="your-game-stripe" style={{ background: fav.color }}></div>
       <div className="your-game-inner">
         <div className="your-game-head">
           <div className="your-game-eyebrow">

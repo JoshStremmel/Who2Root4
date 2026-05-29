@@ -59,18 +59,6 @@ function DivisionTable({ conf, div, teams, fav, seeds }) {
               <div className="name">
                 <span className="city">{t.city}</span>
                 <span className="team-name">{t.name}</span>
-                {tb && (
-                  <span className="tb-tag" title={`Tiebreaker over ${tb.over.join(", ")}: ${tb.reason}`}>
-                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                         strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M9 18l6-6-6-6"/>
-                    </svg>
-                    TB
-                  </span>
-                )}
-              </div>
-              <div className="record mono">
-                {t.record[0]}-{t.record[1]}
               </div>
               <div className="strength-cell">
                 <div className="strength-track"><div className="strength-fill" style={{ width: `${strength * 100}%` }}></div></div>
@@ -78,9 +66,12 @@ function DivisionTable({ conf, div, teams, fav, seeds }) {
               </div>
               <div className="seed-cell">
                 {isFav && <span className="you-tag">You</span>}
-                {!inPlayoffs && s && s.gamesBehind != null && (
+                {s?.gamesBehind != null && (
                   <span className="gb mono">{s.gamesBehind} GB</span>
                 )}
+              </div>
+              <div className="record mono">
+                {t.record[0]}-{t.record[1]}
               </div>
             </div>
           );

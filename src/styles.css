@@ -723,18 +723,10 @@ a.topnav .tab-graph, .topnav a.tab-graph {
   position: relative;
   overflow: hidden;
 }
-.sched-card.own::before {
-  content: "";
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 4px;
-  background: var(--own-color, var(--accent));
-}
 .sched-card.own.tank-mode {
   border-color: var(--text-faint);
   background: color-mix(in oklch, var(--own-color, var(--text-faint)) 6%, var(--surface));
 }
-.sched-card.own.tank-mode::before { background: var(--own-color, var(--text-faint)); }
 .sched-card.own .own-tag {
   background: var(--own-color, var(--accent));
   color: #fff;
@@ -1892,7 +1884,7 @@ a.topnav .tab-graph, .topnav a.tab-graph {
    - Only applies when the grid is actually at 4 columns (> 1100 px). */
 @media (min-width: 1101px) {
   .div-tables-row .div-row {
-    grid-template-columns: 18px 10px minmax(0, 1fr) 40px auto;
+    grid-template-columns: 18px 10px minmax(0, 1fr) auto 40px;
     gap: 6px;
     padding: 8px 10px;
   }
@@ -1930,7 +1922,7 @@ a.topnav .tab-graph, .topnav a.tab-graph {
 .div-table-rows { display: flex; flex-direction: column; }
 .div-row {
   display: grid;
-  grid-template-columns: 20px 12px minmax(0, 1fr) 48px 72px auto;
+  grid-template-columns: 20px 12px minmax(0, 1fr) 72px auto 48px;
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
@@ -2048,7 +2040,8 @@ a.topnav .tab-graph, .topnav a.tab-graph {
   border-radius: 4px;
 }
 .tb-proc-tag.div { background: var(--accent-soft); color: var(--accent-ink); }
-.tb-proc-tag.wc  { background: color-mix(in oklch, var(--text) 6%, transparent); color: var(--text-muted); }
+.tb-proc-tag.wc  { background: oklch(0.92 0.07 305); color: oklch(0.40 0.20 305); }
+[data-theme="dark"] .tb-proc-tag.wc { background: oklch(0.30 0.09 305); color: oklch(0.80 0.14 305); }
 .tb-proc-title {
   font-family: var(--font-data);
   font-weight: 600;
@@ -2721,9 +2714,6 @@ a.topnav .tab-graph, .topnav a.tab-graph {
 
 /* ── Dev-mode banner inside the app ────────────────────────────────────── */
 .dev-banner {
-  position: sticky;
-  top: 0;
-  z-index: 50;
   background: color-mix(in oklch, var(--accent) 14%, var(--bg));
   border-bottom: 1px solid color-mix(in oklch, var(--accent) 35%, var(--border));
   font-family: var(--font-data);
@@ -2749,3 +2739,15 @@ a.topnav .tab-graph, .topnav a.tab-graph {
   cursor: pointer;
 }
 .dev-banner button:hover { background: var(--accent-soft); }
+.dev-banner select.dev-banner-week {
+  background: transparent;
+  border: 1px solid color-mix(in oklch, var(--accent-ink) 30%, transparent);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  cursor: pointer;
+}

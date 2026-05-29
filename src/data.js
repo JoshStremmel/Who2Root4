@@ -485,6 +485,212 @@ async function loadAllData() {
   throw new Error(`No scoreboard data found in github.com/${GH_OWNER}/${GH_REPO} (checked seasons ${seasonOrder.join(", ")}).`);
 }
 
+/* ─── Tiebreaker detection — full NFL two-club rules, all same-conf same-record pairs */
+function computeTiebreakerReasons(rawTeams) {
+  if (!rawTeams) return {};
+
+  // ── helpers ───────────────────────────────────────────────────────────────
+  const pctOf = (res) => {
+    if (!res || !res.length) return null;
+    const w = res.filter(r => r.win).length, t = res.filter(r => r.tie).length;
+    return (w + 0.5 * t) / res.length;
+  };
+  const netPts = (res) => (res || []).reduce((s, r) => s + (r.pf||0) - (r.pa||0), 0);
+
+  // Strength of victory: aggregate win-pct of all defeated opponents
+  const sovOf = (team) => {
+    const wins = (team.results || []).filter(r => r.win);
+    if (!wins.length) return null;
+    let w = 0, l = 0, t = 0;
+    for (const r of wins) { const o = rawTeams[r.oppAbbr]; if (!o) continue; w+=o.record[0]; l+=o.record[1]; t+=o.record[2]||0; }
+    const g = w + l + t;
+    return g ? (w + 0.5 * t) / g : null;
+  };
+
+  // Strength of schedule: aggregate win-pct of all opponents faced
+  const sosOf = (team) => {
+    const games = team.results || [];
+    if (!games.length) return null;
+    let w = 0, l = 0, t = 0;
+    for (const r of games) { const o = rawTeams[r.oppAbbr]; if (!o) continue; w+=o.record[0]; l+=o.record[1]; t+=o.record[2]||0; }
+    const g = w + l + t;
+    return g ? (w + 0.5 * t) / g : null;
+  };
+
+  // Common games between a and b (excluding each other): returns [aGames, bGames] if ≥4 each, else null
+  const commonOf = (a, b) => {
+    const aOpps = new Set((a.results||[]).map(r => r.oppAbbr).filter(x => x !== b.abbr));
+    const bOpps = new Set((b.results||[]).map(r => r.oppAbbr).filter(x => x !== a.abbr));
+    const common = new Set([...aOpps].filter(x => bOpps.has(x)));
+    if (!common.size) return null;
+    const ag = (a.results||[]).filter(r => common.has(r.oppAbbr));
+    const bg = (b.results||[]).filter(r => common.has(r.oppAbbr));
+    return (ag.length >= 4 && bg.length >= 4) ? [ag, bg] : null;
+  };
+
+  // Combined PF+PA rank within a pool (lower = better; 1=best PF + 1=best PA = 2)
+  const combinedRank = (abbr, pool) => {
+    const byPF = [...pool].sort((a, b) => (b.pf||0) - (a.pf||0));
+    const byPA = [...pool].sort((a, b) => (a.pa||0) - (b.pa||0));
+    return (byPF.findIndex(t => t.abbr === abbr) + 1) + (byPA.findIndex(t => t.abbr === abbr) + 1);
+  };
+
+  // ── divisional two-club tiebreaker (NFL rules) ────────────────────────────
+  // Returns: reason string (a wins), null (b wins), undefined (unresolved)
+  const divBreak = (a, b, confPool, allPool) => {
+    // 1. Head-to-head
+    const h2h = (a.results||[]).filter(r => r.oppAbbr === b.abbr);
+    const hW = h2h.filter(r => r.win).length, hL = h2h.filter(r => !r.win&&!r.tie).length;
+    if (h2h.length && hW !== hL) return hW > hL ? `Head-to-head (${hW}-${hL})` : null;
+
+    // 2. Division record
+    const aDR = (a.results||[]).filter(r => { const o=rawTeams[r.oppAbbr]; return o&&o.conf===a.conf&&o.div===a.div; });
+    const bDR = (b.results||[]).filter(r => { const o=rawTeams[r.oppAbbr]; return o&&o.conf===b.conf&&o.div===b.div; });
+    const aDp = pctOf(aDR), bDp = pctOf(bDR);
+    if (aDp!==null && bDp!==null && Math.abs(aDp-bDp)>1e-6) {
+      if (aDp>bDp) { const w=aDR.filter(r=>r.win).length, l=aDR.filter(r=>!r.win&&!r.tie).length; return `Division record (${w}-${l})`; }
+      return null;
+    }
+
+    // 3. Common games (min 4)
+    const cg = commonOf(a, b);
+    if (cg) {
+      const [aCG, bCG] = cg;
+      const acp=pctOf(aCG), bcp=pctOf(bCG);
+      if (acp!==null && bcp!==null && Math.abs(acp-bcp)>1e-6) {
+        if (acp>bcp) { const w=aCG.filter(r=>r.win).length, l=aCG.filter(r=>!r.win&&!r.tie).length; return `Common games (${w}-${l})`; }
+        return null;
+      }
+    }
+
+    // 4. Conference record
+    const aCR = (a.results||[]).filter(r => rawTeams[r.oppAbbr]?.conf===a.conf);
+    const bCR = (b.results||[]).filter(r => rawTeams[r.oppAbbr]?.conf===b.conf);
+    const aCp=pctOf(aCR), bCp=pctOf(bCR);
+    if (aCp!==null && bCp!==null && Math.abs(aCp-bCp)>1e-6) {
+      if (aCp>bCp) { const w=aCR.filter(r=>r.win).length, l=aCR.filter(r=>!r.win&&!r.tie).length; return `Conference record (${w}-${l})`; }
+      return null;
+    }
+
+    // 5. Strength of victory
+    const asv=sovOf(a), bsv=sovOf(b);
+    if (asv!==null && bsv!==null && Math.abs(asv-bsv)>1e-6) return asv>bsv ? `Strength of victory (${asv.toFixed(3)})` : null;
+
+    // 6. Strength of schedule
+    const ass=sosOf(a), bss=sosOf(b);
+    if (ass!==null && bss!==null && Math.abs(ass-bss)>1e-6) return ass>bss ? `Strength of schedule (${ass.toFixed(3)})` : null;
+
+    // 7. Combined ranking, conference PF+PA
+    const arc=combinedRank(a.abbr,confPool), brc=combinedRank(b.abbr,confPool);
+    if (arc!==brc) return arc<brc ? `Conference points rank (#${arc})` : null;
+
+    // 8. Combined ranking, all teams PF+PA
+    const ara=combinedRank(a.abbr,allPool), bra=combinedRank(b.abbr,allPool);
+    if (ara!==bra) return ara<bra ? `League points rank (#${ara})` : null;
+
+    // 9. Net points in common games
+    if (cg) {
+      const an=netPts(cg[0]), bn=netPts(cg[1]);
+      if (an!==bn) return an>bn ? `Net points, common games (${an>0?'+':''}${an})` : null;
+    }
+
+    // 10. Net points in all games
+    const an=(a.pf||0)-(a.pa||0), bn=(b.pf||0)-(b.pa||0);
+    if (an!==bn) return an>bn ? `Net points in all games (${an>0?'+':''}${an})` : null;
+
+    return undefined; // unresolved (coin toss / net TDs not available)
+  };
+
+  // ── wild card two-club tiebreaker (NFL rules, different divisions) ─────────
+  const wcBreak = (a, b, confPool, allPool) => {
+    // 1. Head-to-head (if applicable)
+    const h2h = (a.results||[]).filter(r => r.oppAbbr === b.abbr);
+    const hW=h2h.filter(r=>r.win).length, hL=h2h.filter(r=>!r.win&&!r.tie).length;
+    if (h2h.length && hW!==hL) return hW>hL ? `Head-to-head (${hW}-${hL})` : null;
+
+    // 2. Conference record
+    const aCR=(a.results||[]).filter(r=>rawTeams[r.oppAbbr]?.conf===a.conf);
+    const bCR=(b.results||[]).filter(r=>rawTeams[r.oppAbbr]?.conf===b.conf);
+    const aCp=pctOf(aCR), bCp=pctOf(bCR);
+    if (aCp!==null && bCp!==null && Math.abs(aCp-bCp)>1e-6) {
+      if (aCp>bCp) { const w=aCR.filter(r=>r.win).length, l=aCR.filter(r=>!r.win&&!r.tie).length; return `Conference record (${w}-${l})`; }
+      return null;
+    }
+
+    // 3. Common games (min 4)
+    const cg=commonOf(a,b);
+    if (cg) {
+      const [aCG,bCG]=cg;
+      const acp=pctOf(aCG), bcp=pctOf(bCG);
+      if (acp!==null && bcp!==null && Math.abs(acp-bcp)>1e-6) {
+        if (acp>bcp) { const w=aCG.filter(r=>r.win).length, l=aCG.filter(r=>!r.win&&!r.tie).length; return `Common games (${w}-${l})`; }
+        return null;
+      }
+    }
+
+    // 4. Strength of victory
+    const asv=sovOf(a), bsv=sovOf(b);
+    if (asv!==null && bsv!==null && Math.abs(asv-bsv)>1e-6) return asv>bsv ? `Strength of victory (${asv.toFixed(3)})` : null;
+
+    // 5. Strength of schedule
+    const ass=sosOf(a), bss=sosOf(b);
+    if (ass!==null && bss!==null && Math.abs(ass-bss)>1e-6) return ass>bss ? `Strength of schedule (${ass.toFixed(3)})` : null;
+
+    // 6. Combined ranking, conference PF+PA
+    const arc=combinedRank(a.abbr,confPool), brc=combinedRank(b.abbr,confPool);
+    if (arc!==brc) return arc<brc ? `Conference points rank (#${arc})` : null;
+
+    // 7. Combined ranking, all teams PF+PA
+    const ara=combinedRank(a.abbr,allPool), bra=combinedRank(b.abbr,allPool);
+    if (ara!==bra) return ara<bra ? `League points rank (#${ara})` : null;
+
+    // 8. Net points in conference games
+    const acn=netPts(aCR), bcn=netPts(bCR);
+    if (acn!==bcn) return acn>bcn ? `Net points, conference games (${acn>0?'+':''}${acn})` : null;
+
+    // 9. Net points in all games
+    const an=(a.pf||0)-(a.pa||0), bn=(b.pf||0)-(b.pa||0);
+    if (an!==bn) return an>bn ? `Net points in all games (${an>0?'+':''}${an})` : null;
+
+    return undefined; // unresolved (coin toss / net TDs not available)
+  };
+
+  // ── check all same-conf same-record pairs ─────────────────────────────────
+  const result = {};
+  const addResult = (winner, loser, reason) => {
+    if (!result[winner.abbr]) result[winner.abbr] = { over: [], reason };
+    if (!result[winner.abbr].over.includes(loser.abbr)) result[winner.abbr].over.push(loser.abbr);
+  };
+
+  const allPool = Object.values(rawTeams);
+  for (const conf of ["AFC", "NFC"]) {
+    const confPool = allPool.filter(t => t.conf === conf);
+    const byRecord = {};
+    for (const t of confPool) {
+      const key = `${t.record[0]}-${t.record[1]}-${t.record[2]||0}`;
+      (byRecord[key] = byRecord[key] || []).push(t);
+    }
+    for (const group of Object.values(byRecord)) {
+      if (group.length < 2) continue;
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          const a = group[i], b = group[j];
+          const fn = a.div === b.div ? divBreak : wcBreak;
+          const reason = fn(a, b, confPool, allPool);
+          if (reason != null && reason !== undefined) {
+            addResult(a, b, reason);
+          } else if (reason === null) {
+            const rb = fn(b, a, confPool, allPool);
+            if (rb != null && rb !== undefined) addResult(b, a, rb);
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 /* ─── Boot: kick off load, expose promise ───────────────────────────────── */
 window.W2R4_LOAD_STATUS = { state: "loading", error: null, payload: null };
 window.W2R4_LOAD_PROMISE = (async () => {
@@ -494,7 +700,8 @@ window.W2R4_LOAD_PROMISE = (async () => {
     window.SCHEDULE      = payload.SCHEDULE;
     window.WEEK_META     = payload.WEEK_META;
     window.TEAM_STRENGTHS= payload.TEAM_STRENGTHS;
-    window.TIEBREAKER_REASONS = {};  // optional; the prototype handles absence
+    window.TIEBREAKER_REASONS = computeTiebreakerReasons(payload._rawTeamResults);
+    window._rawTeamResults = payload._rawTeamResults;
     // Build division index
     window.TEAMS_BY_DIVISION = (() => {
       const out = {};
@@ -523,7 +730,21 @@ window.W2R4_LOAD_PROMISE = (async () => {
 /* ─── Standings ─────────────────────────────────────────────────────────── */
 window.computeStandings = function () {
   const teams = Object.values(window.TEAMS || {});
-  const sortByPct = (a, b) => winPct(b) - winPct(a) || b.record[0] - a.record[0];
+  const tb = window.TIEBREAKER_REASONS || {};
+
+  // Sort: win pct → same-record wins (games played) → tiebreaker lookup
+  const sortByPct = (a, b) => {
+    const pd = winPct(b) - winPct(a);
+    if (Math.abs(pd) > 1e-6) return pd;
+    if (b.record[0] !== a.record[0]) return b.record[0] - a.record[0];
+    if (tb[a.abbr]?.over.includes(b.abbr)) return -1;
+    if (tb[b.abbr]?.over.includes(a.abbr)) return 1;
+    return 0;
+  };
+
+  const gb = (leader, team) =>
+    ((leader.record[0] - team.record[0]) + (team.record[1] - leader.record[1])) / 2;
+
   const out = { AFC: [], NFC: [], byTeam: {}, divisions: {} };
 
   for (const conf of ["AFC", "NFC"]) {
@@ -544,10 +765,26 @@ window.computeStandings = function () {
       out[conf].push({ seed: 5 + i, team: rest[i].abbr, kind: "wildcard" });
       out.byTeam[rest[i].abbr] = { seed: 5 + i, kind: "wildcard", conf };
     }
+    const lastWC = rest[2];
     for (let i = 3; i < rest.length; i++) {
-      out.byTeam[rest[i].abbr] = { seed: null, kind: "out", conf, gamesBehind: rest[i].record[1] - (rest[2]?.record[1] ?? rest[i].record[1]) };
+      const g = lastWC ? gb(lastWC, rest[i]) : null;
+      out.byTeam[rest[i].abbr] = { seed: null, kind: "out", conf, gamesBehind: g > 0 ? g : null };
     }
   }
+
+  // Overwrite gamesBehind for every team using division-leader-relative GB
+  for (const conf of ["AFC", "NFC"]) {
+    for (const div of ["North", "South", "East", "West"]) {
+      const divTeams = (out.divisions[conf] || {})[div];
+      if (!divTeams || !divTeams.length) continue;
+      const leader = divTeams[0];
+      for (const t of divTeams) {
+        const g = gb(leader, t);
+        if (out.byTeam[t.abbr]) out.byTeam[t.abbr].gamesBehind = g > 0 ? g : null;
+      }
+    }
+  }
+
   return out;
 };
 

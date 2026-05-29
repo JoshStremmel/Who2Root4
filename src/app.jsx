@@ -231,7 +231,15 @@ function App() {
       {tw && window.WEEK_META?.simWeek &&
       <div className="dev-banner">
           <span>● Dev mode</span>
-          <strong>Simulating Week {window.WEEK_META.simWeek}, 2025 — games this week and beyond are pending</strong>
+          <select className="dev-banner-week" value={window.WEEK_META.simWeek}
+            onChange={(e) => {
+              localStorage.setItem("w2r4_sim_week", String(Number(e.target.value)));
+              location.reload();
+            }}>
+            {Array.from({length: 18}, (_, i) => i + 1).map(w =>
+              <option key={w} value={w}>Week {w}</option>
+            )}
+          </select>
           <button onClick={() => {localStorage.removeItem("w2r4_sim_week");location.reload();}}>
             Exit
           </button>
