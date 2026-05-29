@@ -1,11 +1,18 @@
 /**
- * NFL data loading — TypeScript port of src/data.js.
+ * NFL data loading for the graph view.
  *
- * Fetches ESPN scoreboard cache files from raw.githubusercontent.com
- * and aggregates them into team records / weekly schedules. All functions
- * are pure (no window.* globals) so they compose cleanly with the graph
- * build pipeline.
+ * Fetches ESPN scoreboard cache files from raw.githubusercontent.com and
+ * aggregates them into team records / weekly schedules. All calculation
+ * functions (standings, strengths, tiebreakers, recommendations) are imported
+ * from ROOT4 (@root4) — the shared engine that also powers the main site.
  */
+
+import {
+  DIVISIONS, ABBR_ALIAS, TEAM_COLOR_FALLBACK,
+  normAbbr, winPct, buildTeamStrengths,
+} from "@root4";
+
+export { DIVISIONS, ABBR_ALIAS, TEAM_COLOR_FALLBACK, normAbbr, winPct, buildTeamStrengths };
 
 // ── Repo config ───────────────────────────────────────────────────────────────
 
@@ -13,33 +20,6 @@ const GH_OWNER  = "JoshStremmel";
 const GH_REPO   = "Who2Root4";
 const GH_BRANCH = "main";
 const RAW_BASE  = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}`;
-
-// ── Static metadata ───────────────────────────────────────────────────────────
-
-export const DIVISIONS: Record<string, [string, string]> = {
-  BUF:["AFC","East"],  MIA:["AFC","East"],  NE:["AFC","East"],   NYJ:["AFC","East"],
-  BAL:["AFC","North"], CIN:["AFC","North"], CLE:["AFC","North"], PIT:["AFC","North"],
-  HOU:["AFC","South"], IND:["AFC","South"], JAX:["AFC","South"], TEN:["AFC","South"],
-  DEN:["AFC","West"],  KC: ["AFC","West"],  LV: ["AFC","West"],  LAC:["AFC","West"],
-  DAL:["NFC","East"],  NYG:["NFC","East"],  PHI:["NFC","East"],  WAS:["NFC","East"],
-  CHI:["NFC","North"], DET:["NFC","North"], GB: ["NFC","North"], MIN:["NFC","North"],
-  ATL:["NFC","South"], CAR:["NFC","South"], NO: ["NFC","South"], TB: ["NFC","South"],
-  ARI:["NFC","West"],  LAR:["NFC","West"],  SF: ["NFC","West"],  SEA:["NFC","West"],
-};
-
-const ABBR_ALIAS: Record<string, string> = { WSH: "WAS", JAC: "JAX" };
-export const normAbbr = (a: string): string => ABBR_ALIAS[a] ?? a;
-
-export const TEAM_COLOR_FALLBACK: Record<string, string> = {
-  PIT:"#ffb612", BAL:"#241773", CIN:"#fb4f14", CLE:"#311d00",
-  BUF:"#00338d", MIA:"#008e97", NYJ:"#125740", NE:"#002a5c",
-  HOU:"#03202f", IND:"#002c5f", JAX:"#006778", TEN:"#19c6ff",
-  KC:"#e31837",  LAC:"#0080c6", DEN:"#fb4f14", LV:"#000000",
-  DET:"#0076b6", GB:"#203731",  MIN:"#4f2683", CHI:"#0b162a",
-  PHI:"#004c54", DAL:"#003594", WAS:"#5a1414", NYG:"#0b2265",
-  TB:"#d50a0a",  ATL:"#a71930", NO:"#d3bc8d",  CAR:"#0085ca",
-  SF:"#aa0000",  LAR:"#003594", SEA:"#002244", ARI:"#97233f",
-};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -149,12 +129,6 @@ export interface LoadedData {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-export function winPct(t: Pick<TeamData, "record">): number {
-  const [w, l, ties = 0] = t.record;
-  const games = w + l + ties;
-  return games === 0 ? 0 : (w + 0.5 * ties) / games;
-}
 
 const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 function formatKickoff(iso: string | undefined): string {
@@ -395,53 +369,6 @@ export function buildSchedule(weekInfo: WeekInfo | null, teams: Record<string, T
   });
 }
 
-// ── Build team strengths ──────────────────────────────────────────────────────
-
-export function buildTeamStrengths(teams: Record<string, TeamData>): Record<string, TeamStrength> {
-  const out: Record<string, TeamStrength> = {};
-  const raw: Record<string, { games: number; wp: number; pd: number; recentWp: number; consistency: number; divBonus: number; sos: number }> = {};
-
-  for (const abbr of Object.keys(teams)) {
-    const t = teams[abbr];
-    const wp = winPct(t);
-    const pd = t.pf - t.pa;
-    const recent = t.results.slice(-4);
-    const recentWp = recent.length ? recent.filter(r => r.win).length / recent.length : 0;
-    const margins = t.results.filter(r => r.win).map(r => r.pf - r.pa);
-    let consistency = 0.5;
-    if (margins.length >= 2) {
-      const mean = margins.reduce((a,b)=>a+b,0)/margins.length;
-      const variance = margins.reduce((s,m)=>s+(m-mean)*(m-mean),0)/margins.length;
-      consistency = Math.max(0, Math.min(1, 1 - Math.sqrt(variance) / 28));
-    }
-    const divGames = t.results.filter(r => teams[r.oppAbbr]?.div === t.div && teams[r.oppAbbr]?.conf === t.conf);
-    const divBonus = divGames.length ? divGames.filter(r => r.win).length / divGames.length : 0.5;
-    const oppWps = t.results.map(r => winPct(teams[r.oppAbbr] ?? { record: [0,0,0] }));
-    const sos = oppWps.length ? oppWps.reduce((a,b)=>a+b,0)/oppWps.length : 0.5;
-    raw[abbr] = { games: t.record[0]+t.record[1]+t.record[2], wp, pd, recentWp, consistency, divBonus, sos };
-  }
-
-  const pds = Object.values(raw).map(r => r.pd);
-  const minPd = Math.min(...pds, 0), maxPd = Math.max(...pds, 0);
-  const range = (maxPd - minPd) || 1;
-
-  for (const abbr of Object.keys(raw)) {
-    const r = raw[abbr];
-    const pointDiff = (r.pd - minPd) / range;
-    const strengthScore = Math.max(0, Math.min(1,
-      0.35*r.wp + 0.25*pointDiff + 0.15*r.recentWp + 0.10*r.consistency + 0.10*r.divBonus + 0.05*r.sos
-    ));
-    out[abbr] = {
-      strengthScore: +strengthScore.toFixed(2),
-      pointDiff:     +pointDiff.toFixed(2),
-      sos:           +r.sos.toFixed(2),
-      divisionBonus: +r.divBonus.toFixed(2),
-      recentForm:    +r.recentWp.toFixed(2),
-      winMarginConsistency: +r.consistency.toFixed(2),
-    };
-  }
-  return out;
-}
 
 // ── Build week meta ───────────────────────────────────────────────────────────
 

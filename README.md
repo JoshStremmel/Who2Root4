@@ -1,165 +1,113 @@
 # Who2Root4
 
-**Tell it your team. It tells you who to root for.**
+NFL rooting recommendation engine — tells you which games to watch and who to root for based on your favorite team's playoff path.
 
-Who2Root4 pulls live NFL data from the ESPN public API, builds a semantic RDF knowledge graph using the [holonic](https://pypi.org/project/holonic/) four-graph model, applies official NFL tiebreaker logic, and outputs a ranked list of games you should care about this week — and which team to cheer for in each.
+Live at **[who2root4.vercel.app](https://who2root4.vercel.app)**
 
 ---
-![Website preview](./assets/page-preview.png)
+
+## How it works
+
+1. **Data**: `pipeline.py` fetches ESPN scoreboard JSON and caches it to `.cache/espn/`. These files are committed to the repo.
+2. **Engine**: `src/root4.js (ROOT4)` is the single canonical calculation module — standings, playoff probabilities, tiebreakers, recommendations, and scenarios all live here.
+3. **Main app**: `index.html` + `src/` — loads ESPN data from GitHub, runs the engine, and renders the UI.
+4. **Graph view**: `graph/` — a separate Vite/TypeScript app that visualizes playoff impact as an interactive node graph. It imports the same engine so calculations are always identical to the main site.
+
 ---
 
-## Install
+## Architecture
+
+```
+src/
+  root4.js       ← ROOT4: single source of truth for all NFL calculations
+  root4.d.ts     ← TypeScript declarations (used by the graph app)
+  data.js        ← ESPN data loader; calls engine functions; sets window.* globals
+  app.jsx        ← main React app shell
+  recs.jsx       ← "This Week" recommendations view
+  standings.jsx  ← division standings + playoff bracket
+  scenarios.jsx  ← clinch / elimination scenarios
+  schedule.jsx   ← weekly schedule grid
+  detail.jsx     ← game detail overlay
+
+graph/
+  src/
+    lib/
+      nfl-data.ts    ← ESPN data loader for the graph view
+      ugm-builder.ts ← builds UGM graph nodes/edges; imports ROOT4 via @root4 alias
+    pages/
+      GraphView.tsx
+    components/
+      PlayoffGraph.tsx
+
+builders/
+  espn_fetcher.py    ← ESPN API client
+  season_ingester.py ← full-season ingestion with disk caching
+
+pipeline.py          ← ESPN data fetcher (run to refresh cached data)
+```
+
+### ROOT4 — the single calculation engine
+
+`src/root4.js` exports pure functions — they take data as parameters and return results with no side effects or global reads:
+
+| Function | Description |
+|---|---|
+| `computeStandings(teams, tiebreakers)` | 7-seed playoff picture per conference |
+| `computeTiebreakerReasons(teams)` | Full NFL two-club tiebreaker rules |
+| `buildTeamStrengths(teams)` | 6-signal strength score [0,1] per team |
+| `computeRecommendations(fav, dislikes, mode, ...)` | Ranked rooting recommendations |
+| `computeScenarios(fav, ...)` | Clinch / elimination paths |
+| `availableModes(fav, ...)` | Which modes are still reachable |
+| `modeScore(...)` | Per-game impact score for a given mode |
+
+**Main app** wraps these as `window.*` globals so JSX components work without changes.
+**Graph app** imports them directly via Vite alias `@root4 → ../../src/root4.js`.
+
+When you change `src/root4.js`, every part of the site updates — no sync required.
+
+---
+
+## Development
+
+### Refresh ESPN data
 
 ```bash
-pip install -r requirements.txt
+python pipeline.py                          # current season
+python pipeline.py --season 2025 --through-week 14
+python pipeline.py --force-refresh
 ```
 
----
-
-## Quick Start
+### Run the graph view
 
 ```bash
-# Current week — Steelers fan
-python pipeline.py --team PIT
-
-# Full season with playoff scenario analysis
-python pipeline.py --team PIT --full-season
-
-# Full season through a specific week
-python pipeline.py --team PIT --full-season --through-week 14 --season 2025
-
-# Include postseason rounds (Wild Card → Super Bowl)
-python pipeline.py --team PIT --full-season --postseason
-
-# Simulate standings as of week 12 (blanks results for weeks ≥ 12)
-python pipeline.py --team PIT --full-season --sim-week 12
-
-# Dislikes also affect recommendation scores
-python pipeline.py --team PIT --dislikes BAL CLE
-
-# Save graph to TriG, also dump per-named-graph Turtle files
-python pipeline.py --team PIT --full-season --output holarchy.trig --dump-graphs
-
-# Dry-run: load from saved ESPN JSON (no network)
-python pipeline.py --team PIT --json-file espn_data.json
-
-# Force re-fetch even if cache exists
-python pipeline.py --team PIT --full-season --force-refresh
+pnpm dev:graph    # starts at http://localhost:5174/graph/
 ```
 
----
-
-## Tiebreaker CLI
+### Build for production
 
 ```bash
-# Resolve a division tie
-python tiebreaker.py --conference AFC --division North
-
-# Resolve wild card bubble
-python tiebreaker.py --wildcard AFC
+pnpm build:graph  # builds graph app to dist/graph/
 ```
+
+Vercel builds the graph app and serves the main app as static files.
 
 ---
 
-## File Layout
+## Design decisions
 
-```text
-Who2Root4/
-├── pipeline.py                          # Orchestration entry point
-├── tiebreaker.py                        # Standalone NFL tiebreaker CLI
-├── requirements.txt
-│
-├── ontology/                            # OWL 2 / RDF vocabularies
-│   ├── core.ttl
-│   ├── competition.ttl
-│   └── playoff_impact_recommendation.ttl
-│
-├── builders/
-│   ├── espn_fetcher.py                  # ESPN API → normalised Python dicts
-│   ├── rdf_builder.py                   # Dicts → holonic rdflib Dataset
-│   ├── season_ingester.py               # Multi-week ingestion with disk cache
-│   ├── scenario_builder.py              # Clinch / elimination scenario holons
-│   ├── recommendation_engine.py         # Graph reasoning → rooting recommendations
-│   ├── team_strength.py                 # Multi-signal team strength scoring
-│   └── membrane_validator.py            # SHACL / boundary validation
-│
-├── queries/
-│   └── sparql_queries.py                # Named SPARQL queries + run_query() helper
-│
-└── tests/
-```
+- **No server-side calculations** — everything computes in the browser from cached ESPN JSON. The site works as long as `.cache/espn/` files are committed.
+- **ROOT4** — `src/root4.js` is the only place NFL math lives. Both views import from it.
+- **Python = data only** — `pipeline.py` and `builders/` fetch and cache ESPN data. No calculations happen in Python.
+- **Graph view uses UGM** — `@g3t/core` UGM powers the interactive graph visualization. Node/edge data comes from ROOT4.
 
 ---
 
-## How It Works
+## Stack
 
-### 1 — Ingest
-`espn_fetcher.py` pulls scoreboard and standings from the ESPN public API. In `--full-season` mode, `season_ingester.py` fetches all weeks (with a local JSON cache) and can simulate any mid-season state with `--sim-week`.
-
-### 2 — Build the Graph
-`rdf_builder.py` turns the normalised Python dicts into a holonic RDF `Dataset` with named graphs:
-
-| Named Graph IRI                     | Layer      | Contents                                  |
-|-------------------------------------|------------|--------------------------------------------|
-| `urn:nfl:graph:team:<ABBR>`         | Interior   | Per-team facts (name, record, division)    |
-| `urn:nfl:graph:games:<season>:<wk>` | Interior   | Game events for a specific week            |
-| `urn:nfl:graph:outcomes`            | Interior   | Completed game outcomes + impact edges     |
-| `urn:nfl:graph:competition`         | Interior   | Structural & competitive edges             |
-| `urn:nfl:graph:standings`           | Interior   | Standings snapshot + playoff assignments   |
-| `urn:nfl:graph:scenarios`           | Interior   | Active clinch / elimination scenario holons|
-| `urn:nfl:graph:tiebreakers`         | Interior   | Tiebreaker order + reasons                 |
-| `urn:nfl:graph:holarchy`            | Context    | Registry of all holons + their graph IRIs  |
-| `urn:nfl:graph:recommendations`     | Projection | User-specific rooting recommendations      |
-| (default graph)                     | Boundary   | Ontology / SHACL shapes                    |
-
-### 3 — Tiebreakers
-`tiebreaker.py` implements the full official NFL division and wild-card tiebreaker procedure (head-to-head, division record, common games, conference record, strength of victory/schedule, combined ranking, net points, net touchdowns). Results are written into `graph:tiebreakers` as `nfl:tiebreakOver` / `nfl:tiebreakReason` triples.
-
-### 4 — Scenarios
-`scenario_builder.py` generates clinch and elimination scenario holons — concrete sets of results that would seal a playoff spot or knock a team out — and links them to the relevant impact edges.
-
-### 5 — Recommendations
-`recommendation_engine.py` queries the graph with SPARQL and scores every upcoming game on several signals (divisional urgency, active scenario requirements, disliked teams, standings proximity, team strength). The highest-scoring game is the one you should care about most, and the recommended team is the side whose win helps your team the most.
-
----
-
-## Example Output
-
-```
-================================================================
-  ROOTING GUIDE for Pittsburgh Steelers fans
-================================================================
-
-  #1  Root for: Cincinnati Bengals         vs  Baltimore Ravens
-      Score:    0.782  [################    ]
-      Why:      BAL is a division rival still in the title race (1.0 GB, 5 weeks left) — their loss directly helps; BAL losing satisfies an active clinch scenario requirement (score 0.78)
-
-  #2  Root for: Jacksonville Jaguars       vs  Houston Texans
-      Score:    0.621  [############        ]
-      Why:      HOU is a conference competitor — their loss improves wild card odds (score 0.62)
-```
-
----
-
-## Extending
-
-### Swap in Apache Jena Fuseki
-
-```python
-from holonic.backends.fuseki_backend import FusekiBackend
-from holonic import HolonicDataset
-
-ds = HolonicDataset(backend=FusekiBackend("http://localhost:3030", dataset="nfl"))
-```
-
-Pass `ds.dataset` to `NFLGraphBuilder`.
-
-### Add User Preferences Directly
-
-```python
-from builders.rdf_builder import USER, NFL, _team_iri
-
-user_g = builder.dataset.graph("urn:nfl:graph:users")
-user_g.add((USER["josh"], NFL.favoriteTeam, _team_iri("PIT")))
-user_g.add((USER["josh"], NFL.dislikes,     _team_iri("BAL")))
-```
+| Layer | Tech |
+|---|---|
+| Main app | React 18 (CDN), Babel standalone, vanilla CSS |
+| Graph view | React 18, Vite, TypeScript, @g3t/core UGM, Cytoscape |
+| ROOT4 engine | Vanilla ES module JavaScript (`src/root4.js`) |
+| Data pipeline | Python 3, requests |
+| Deployment | Vercel |

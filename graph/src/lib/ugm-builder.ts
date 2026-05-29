@@ -1,120 +1,27 @@
 /**
- * UGM builder — port of src/data.js compute functions.
+ * ugm-builder.ts — Builds the UGM graph model for the playoff picture view.
  *
- * computeStandings / computeRecommendations are pure functions that take
- * LoadedData (no window.* reads), then buildGraphData assembles the UGM
- * class instance and GraphData shape consumed by PlayoffGraph.
+ * All standings, mode scoring, and strength calculations are imported from
+ * ROOT4 (@root4 → src/root4.js) — the same engine that powers the main site.
+ * Only UGM-specific graph construction (nodes, edges, playoff probability
+ * heuristic) lives here.
  */
 
 import { UGM } from "@g3t/core";
 import type { GraphData, GraphNode, GraphEdge } from "../types";
-import type { LoadedData, TeamData } from "./nfl-data";
-import { winPct } from "./nfl-data";
+import type { LoadedData } from "./nfl-data";
+import {
+  computeStandings,
+  computeTiebreakerReasons,
+  modeScore,
+  winPct,
+  type StandingEntry,
+  type TeamData,
+} from "@root4";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-// ── Standings helpers ─────────────────────────────────────────────────────────
-
-function gamesBack(fav: TeamData, teams: Record<string, TeamData>): number {
-  const divLeader = Object.values(teams)
-    .filter(t => t.conf === fav.conf && t.div === fav.div)
-    .reduce((a, b) => b.record[0] > a.record[0] ? b : a, fav);
-  if (divLeader.abbr === fav.abbr) return 0;
-  return ((divLeader.record[0] - fav.record[0]) + (fav.record[1] - divLeader.record[1])) / 2;
-}
-
-function weeksRemaining(loaded: LoadedData): number {
-  return loaded.weekMeta.weeksRemaining;
-}
-
-function inDivisionContention(team: TeamData, teams: Record<string, TeamData>, loaded: LoadedData): boolean {
-  return gamesBack(team, teams) <= weeksRemaining(loaded);
-}
-
-// ── Standings ─────────────────────────────────────────────────────────────────
-
-interface StandingEntry {
-  seed: number | null;
-  kind: "division" | "wildcard" | "out";
-  conf: string;
-  gamesBehind?: number;
-}
-
-function computeStandings(teams: Record<string, TeamData>): Record<string, StandingEntry> {
-  const sortByPct = (a: TeamData, b: TeamData) => winPct(b) - winPct(a) || b.record[0] - a.record[0];
-  const byTeam: Record<string, StandingEntry> = {};
-
-  for (const conf of ["AFC", "NFC"]) {
-    const divs: Record<string, TeamData[]> = {};
-    for (const t of Object.values(teams).filter(t => t.conf === conf)) {
-      (divs[t.div] = divs[t.div] ?? []).push(t);
-    }
-    for (const d of Object.keys(divs)) divs[d].sort(sortByPct);
-
-    const order = ["East","North","South","West"].filter(d => divs[d]);
-    const winners = order.map(d => divs[d][0]).filter(Boolean).sort(sortByPct);
-
-    winners.forEach((t, i) => {
-      byTeam[t.abbr] = { seed: i + 1, kind: "division", conf };
-    });
-
-    const winnersSet = new Set(winners.map(t => t.abbr));
-    const rest = Object.values(teams)
-      .filter(t => t.conf === conf && !winnersSet.has(t.abbr))
-      .sort(sortByPct);
-
-    for (let i = 0; i < 3 && i < rest.length; i++) {
-      byTeam[rest[i].abbr] = { seed: 5 + i, kind: "wildcard", conf };
-    }
-    for (let i = 3; i < rest.length; i++) {
-      byTeam[rest[i].abbr] = {
-        seed: null, kind: "out", conf,
-        gamesBehind: rest[i].record[1] - (rest[2]?.record[1] ?? rest[i].record[1]),
-      };
-    }
-  }
-  return byTeam;
-}
-
-// ── Mode score ────────────────────────────────────────────────────────────────
-
-function modeScore(
-  _candidate: string, opponent: string,
-  fav: TeamData, mode: string, dislikes: string[],
-  teams: Record<string, TeamData>, loaded: LoadedData,
-): number {
-  const o = teams[opponent];
-  if (!o) return 0;
-  const isSameDiv  = o.div === fav.div && o.conf === fav.conf;
-  const isSameConf = o.conf === fav.conf;
-  const wr = weeksRemaining(loaded);
-  const favGB = gamesBack(fav, teams);
-  let score = 0;
-
-  if (mode === "division") {
-    if (isSameDiv) {
-      if (inDivisionContention(fav, teams, loaded) && inDivisionContention(o, teams, loaded)) {
-        score += 0.25 + 0.25 * Math.max(0, 1 - favGB / Math.max(wr, 1));
-      } else score += 0.25;
-    }
-  } else if (mode === "wildcard") {
-    if (isSameConf) score += 0.20;
-  } else if (mode === "conf_one_seed") {
-    if (isSameConf) score += 0.20 + 0.10 * Math.min(o.record[0] / 17, 1);
-  } else {
-    if (isSameDiv && inDivisionContention(fav, teams, loaded) && inDivisionContention(o, teams, loaded)) {
-      score += 0.20 + 0.20 * Math.max(0, 1 - favGB / Math.max(wr, 1));
-    } else if (isSameDiv)  score += 0.20;
-    else if (isSameConf)   score += 0.20;
-  }
-  if (dislikes.includes(opponent)) score += 0.15;
-  const favPct = winPct(fav), oppPct = winPct(o);
-  score += Math.max(0, 0.10 - Math.abs(favPct - oppPct) * 0.2);
-  return score;
-}
-
-
-// ── Playoff probability heuristic ─────────────────────────────────────────────
+// ── Playoff probability heuristic (graph-view only) ───────────────────────
+// Not part of the shared engine because it's a visual indicator, not a
+// calculation used for recommendations or scenario math.
 
 function playoffProbability(
   abbr: string,
@@ -127,17 +34,10 @@ function playoffProbability(
   if (!t) return 0.5;
   const gamesPlayed = t.record[0] + t.record[1] + t.record[2];
   if (gamesPlayed < 2) return 0.5;
-
   const progress = Math.min(1, gamesPlayed / 17);
-
   if (!standing) return 0.5;
-  if (standing.kind === "division") {
-    return +(0.60 + 0.30 * progress).toFixed(2);
-  }
-  if (standing.kind === "wildcard") {
-    return +(0.45 + 0.20 * progress).toFixed(2);
-  }
-  // "out" of wildcard — but may still be in division contention
+  if (standing.kind === "division") return +(0.60 + 0.30 * progress).toFixed(2);
+  if (standing.kind === "wildcard") return +(0.45 + 0.20 * progress).toFixed(2);
   if (inDivContention) {
     if (divGB <= 0) return +(0.42 * progress).toFixed(2);
     if (divGB === 1) return +(0.28 * progress).toFixed(2);
@@ -151,13 +51,11 @@ function playoffProbability(
   return 0.01;
 }
 
-// ── Playoff edge builder ──────────────────────────────────────────────────────
-// For every scheduled game (A vs B) and every other team C, computes the net
-// effect of A winning on C's playoff odds, then emits:
-//   • improvesOdds A→C when A winning is a net positive for C
-//   • hurtsOdds   A→C when A winning is a net negative for C
-// (and the symmetric edge for B).  One edge per (type, source, target) pair —
-// the highest-scoring one wins when multiple games produce the same key.
+// ── Playoff impact edges ───────────────────────────────────────────────────
+// For every scheduled game (A vs B) and every third team C, computes whether
+// A winning helps or hurts C's playoff odds, then emits improvesOdds/hurtsOdds
+// edges. Uses modeScore from the shared engine so impact math matches the main
+// site's recommendation engine exactly.
 
 function computeAllPlayoffEdges(loaded: LoadedData, mode: string): GraphEdge[] {
   const dislikes: string[] = [];
@@ -178,18 +76,15 @@ function computeAllPlayoffEdges(loaded: LoadedData, mode: string): GraphEdge[] {
     for (const [abbr, fav] of Object.entries(loaded.teams)) {
       if (abbr === g.home || abbr === g.away) continue;
 
-      // Net effect of home winning on fav's odds.
-      // Positive → home winning helps fav (away is fav's rival).
-      // Negative → home winning hurts fav (home is fav's rival).
-      const homeHelps = modeScore(g.home, g.away, fav, mode, dislikes, loaded.teams, loaded);
-      const awayHelps = modeScore(g.away, g.home, fav, mode, dislikes, loaded.teams, loaded);
+      const homeHelps = modeScore(g.home, g.away, fav, mode, dislikes, loaded.teams, loaded.weekMeta);
+      const awayHelps = modeScore(g.away, g.home, fav, mode, dislikes, loaded.teams, loaded.weekMeta);
       const net = homeHelps - awayHelps;
 
       if (Math.abs(net) < 0.05) continue;
 
       const score = Math.min(Math.abs(net) + sBonus, 1.0);
-      const helper = net > 0 ? g.home : g.away;  // team whose win helps abbr
-      const hurter = net > 0 ? g.away : g.home;  // team whose win hurts abbr
+      const helper = net > 0 ? g.home : g.away;
+      const hurter  = net > 0 ? g.away : g.home;
 
       upsert({
         id: `imp_${helper}_${abbr}`,
@@ -219,9 +114,7 @@ function computeAllPlayoffEdges(loaded: LoadedData, mode: string): GraphEdge[] {
   return Array.from(edgeMap.values());
 }
 
-// ── winsOver edge builder ──────────────────────────────────────────────────────
-// One directed edge per same-conference head-to-head result this season.
-// Only includes teams that appear in the current graph (nodeIds).
+// ── Head-to-head winsOver edges ───────────────────────────────────────────
 
 function computeWinsOverEdges(
   loaded: LoadedData,
@@ -235,8 +128,6 @@ function computeWinsOverEdges(
     for (const result of team.results) {
       if (!result.win) continue;
       if (!nodeIds.has(result.oppAbbr)) continue;
-      const oppTeam = loaded.teams[result.oppAbbr];
-      if (!oppTeam) continue;
       const key = `${abbr}_${result.oppAbbr}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -256,58 +147,52 @@ function computeWinsOverEdges(
   return edges;
 }
 
-// ── buildGraphData ─────────────────────────────────────────────────────────────
+// ── buildGraphData ─────────────────────────────────────────────────────────
 
 export function buildGraphData(
   loaded: LoadedData,
   favAbbr = "",
   mode = "overall",
 ): { ugm: UGM; graphData: GraphData } {
-  const standings = computeStandings(loaded.teams);
+  // Use the shared engine for standings — same algorithm as the main site.
+  const tiebreakerReasons = computeTiebreakerReasons(loaded.teams);
+  const standings = computeStandings(loaded.teams, tiebreakerReasons);
   const wr = loaded.weekMeta.weeksRemaining;
 
-  // 1-seed win count per conference (for the "1-seed contender" flag)
   const oneSeedWins: Partial<Record<string, number>> = {};
-  for (const [abbr, entry] of Object.entries(standings)) {
+  for (const [abbr, entry] of Object.entries(standings.byTeam)) {
     if (entry.seed === 1) oneSeedWins[entry.conf] = loaded.teams[abbr]?.record[0] ?? 0;
   }
 
-  // All known teams in the graph
   const teamsInWeek = new Set<string>(Object.keys(loaded.teams));
   if (favAbbr) teamsInWeek.add(favAbbr);
 
-  // Build nodes
   const nodes: GraphNode[] = [];
   for (const abbr of teamsInWeek) {
     const t = loaded.teams[abbr];
     if (!t) continue;
-    const standing = standings[abbr];
+    const standing = standings.byTeam[abbr];
     const label = t.name ? `${t.city} ${t.name}`.trim() : abbr;
 
-    // Check if team can still win their division — a rival's current wins must not
-    // already exceed this team's maximum possible wins.  Needed so a team tied for
-    // their division lead (arbitrarily sorted to the "out" wildcard bucket) is never
-    // wrongly marked eliminated before they've played their final game(s).
     const divRivals = Object.values(loaded.teams).filter(
       o => o.conf === t.conf && o.div === t.div && o.abbr !== abbr
     );
-    const maxWins = t.record[0] + wr;
+    const maxWinsVal = t.record[0] + wr;
     const inDivContention = standing?.kind === "out"
-      && divRivals.every(rival => rival.record[0] <= maxWins);
+      && divRivals.every(rival => rival.record[0] <= maxWinsVal);
     const divLeaderWins = divRivals.length > 0
       ? Math.max(...divRivals.map(r => r.record[0]))
       : 0;
     const divGB = Math.max(0, divLeaderWins - t.record[0]);
 
     const standingKind: GraphNode["standingKind"] =
-      !standing            ? "in_hunt"
+      !standing              ? "in_hunt"
       : standing.kind === "division" ? "division_leader"
       : standing.kind === "wildcard" ? "wildcard"
       : (standing.gamesBehind ?? 99) <= wr ? "in_hunt"
-      : inDivContention ? "in_hunt"    // division still winnable — not eliminated
+      : inDivContention ? "in_hunt"
       : "eliminated";
 
-    // Eliminated teams have 0% probability; others use the heuristic.
     const prob = standingKind === "eliminated"
       ? 0
       : playoffProbability(abbr, standing, loaded.teams, inDivContention, divGB);
@@ -336,7 +221,6 @@ export function buildGraphData(
     });
   }
 
-  // Build edges: playoff impact edges + head-to-head winsOver edges
   const edges = [
     ...computeAllPlayoffEdges(loaded, mode),
     ...computeWinsOverEdges(loaded, teamsInWeek),
