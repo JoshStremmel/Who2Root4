@@ -1,5 +1,105 @@
 /* Schedule grid — this week's games grouped by broadcast slot. */
 
+function PrintView({ recs, fav, onClose, mode }) {
+  const byId = {};
+  recs.forEach(r => { byId[r.gameId] = r; });
+
+  const favTeam = window.TEAMS[fav];
+  const slotOrder = ["TNF", "Fri", "Sat", "Early", "Late", "SNF", "MNF", "Reg", "TBD"];
+  const slotLabels = {
+    TNF: "Thursday Night", Fri: "Friday", Sat: "Saturday",
+    Early: "Sunday Early", Late: "Sunday Late",
+    SNF: "Sunday Night", MNF: "Monday Night", Reg: "Other", TBD: "TBD",
+  };
+
+  const grouped = {};
+  for (const g of window.SCHEDULE) {
+    const key = slotOrder.includes(g.slot) ? g.slot : "Reg";
+    (grouped[key] = grouped[key] || []).push(g);
+  }
+  const slots = slotOrder.filter(s => (grouped[s] || []).length);
+
+  return (
+    <div className="pv-overlay" onClick={onClose}>
+      <div className="pv-sheet" onClick={e => e.stopPropagation()}>
+
+        {/* Toolbar — hidden when printing */}
+        <div className="pv-toolbar no-print">
+          <span className="pv-meta">
+            {window.WEEK_META.label} · {window.WEEK_META.season} · <strong>{favTeam.name}</strong> perspective
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" onClick={() => window.print()}>Print</button>
+            <button className="btn ghost" onClick={onClose}>Close</button>
+          </div>
+        </div>
+
+        {/* Print-only heading */}
+        <div className="pv-print-head print-only">
+          <div style={{ fontWeight: 700, fontSize: 18 }}>{window.WEEK_META.label} · {window.WEEK_META.season}</div>
+          <div style={{ color: "#555", fontSize: 13 }}>Who to Root For — {favTeam.name} perspective</div>
+        </div>
+
+        <table className="pv-table">
+          <thead>
+            <tr>
+              <th>Kickoff</th>
+              <th>Matchup</th>
+              <th>Root for</th>
+              <th>Impact</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {slots.flatMap(slot => {
+              const games = grouped[slot] || [];
+              return [
+                <tr key={`slot-${slot}`} className="pv-slot-row">
+                  <td colSpan={5}>{slotLabels[slot]}</td>
+                </tr>,
+                ...games.map(g => {
+                  const rec = byId[g.id];
+                  const isOwn = g.home === fav || g.away === fav;
+                  const hasImpact = rec && rec.score > 0.001;
+                  const rootFor = rec?.rootFor;
+                  const oppAbbr = isOwn ? (g.home === fav ? g.away : g.home) : null;
+                  return (
+                    <tr key={g.id} className={isOwn ? "pv-own" : hasImpact ? "pv-hit" : "pv-miss"}>
+                      <td className="pv-time mono">{g.kickoff}</td>
+                      <td className="pv-teams">
+                        <span className={rootFor === g.away ? "pv-root" : ""}>{g.away}</span>
+                        <span className="pv-at"> @ </span>
+                        <span className={rootFor === g.home ? "pv-root" : ""}>{g.home}</span>
+                      </td>
+                      <td className="pv-pick">
+                        {isOwn
+                          ? <span className="pv-you">YOU</span>
+                          : hasImpact
+                            ? <span className="pv-root">{rootFor}</span>
+                            : <span className="pv-dash">—</span>}
+                      </td>
+                      <td className="pv-score mono">
+                        {isOwn ? "" : hasImpact ? rec.score.toFixed(2) : "—"}
+                      </td>
+                      <td className="pv-reason">
+                        {isOwn
+                          ? `${favTeam.abbr} ${g.home === fav ? "vs" : "@"} ${window.TEAMS[oppAbbr]?.abbr}`
+                          : hasImpact && rec.reasoning
+                            ? rec.reasoning.charAt(0).toUpperCase() + rec.reasoning.slice(1)
+                            : ""}
+                      </td>
+                    </tr>
+                  );
+                }),
+              ];
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ScheduleCard({ game, rec, fav, onOpen, delay, mode }) {
   const home = window.TEAMS[game.home];
   const away = window.TEAMS[game.away];
@@ -112,6 +212,7 @@ function ScheduleCard({ game, rec, fav, onOpen, delay, mode }) {
 function Schedule({ recs, fav, onOpenDetail, mode, setMode }) {
   const byId = {};
   recs.forEach((r) => {byId[r.gameId] = r;});
+  const [printOpen, setPrintOpen] = React.useState(false);
 
   // Group by slot — render any slot that has games (handles Fri/Sat specials)
   const slotOrder = ["TNF", "Fri", "Sat", "Early", "Late", "SNF", "MNF", "Reg", "TBD"];
@@ -144,6 +245,12 @@ function Schedule({ recs, fav, onOpenDetail, mode, setMode }) {
             Every game this week. Highlights show who to root for from a {window.TEAMS[fav].name} perspective.
           </div>
         </div>
+        <button className="btn ghost" onClick={() => setPrintOpen(true)} style={{ flexShrink: 0 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6, verticalAlign: "middle" }}>
+            <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>
+          </svg>
+          Print view
+        </button>
       </div>
 
       {setMode && window.ModeSelector &&
@@ -168,6 +275,8 @@ function Schedule({ recs, fav, onOpenDetail, mode, setMode }) {
           </div>);
 
       })}
+
+      {printOpen && <PrintView recs={recs} fav={fav} mode={mode} onClose={() => setPrintOpen(false)} />}
     </>);
 
 }

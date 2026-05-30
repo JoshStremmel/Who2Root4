@@ -2680,6 +2680,89 @@ a.topnav .tab-graph, .topnav a.tab-graph {
   grid-template-columns: repeat(9, 1fr);
   gap: 6px;
 }
+
+/* ── Print view ─────────────────────────────────────────────────────────── */
+.pv-overlay {
+  position: fixed; inset: 0;
+  background: color-mix(in oklch, var(--bg) 70%, transparent);
+  backdrop-filter: blur(8px);
+  z-index: 90;
+  display: grid; place-items: start center;
+  padding: 24px;
+  overflow-y: auto;
+  animation: fadeIn 0.18s ease;
+}
+.pv-sheet {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 100%; max-width: 860px;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  overflow: hidden;
+}
+.pv-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  gap: 12px;
+}
+.pv-meta { font-family: var(--font-data); font-size: 13px; color: var(--text-muted); }
+.pv-print-head { padding: 16px 20px 0; display: none; }
+.pv-table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--font-data); font-size: 13px;
+}
+.pv-table thead th {
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.pv-table tbody tr:hover { background: var(--surface-2); }
+.pv-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.pv-slot-row td {
+  padding: 6px 12px 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+}
+.pv-own td { background: color-mix(in oklch, var(--accent) 6%, transparent); }
+.pv-miss td { color: var(--text-muted); }
+.pv-at { color: var(--text-faint); }
+.pv-root { font-weight: 700; color: var(--accent-ink); }
+.pv-you { font-family: var(--font-data); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; background: var(--accent-soft); color: var(--accent-ink); padding: 2px 6px; border-radius: 4px; }
+.pv-dash { color: var(--text-faint); }
+.pv-time { color: var(--text-muted); white-space: nowrap; }
+.pv-reason { color: var(--text-muted); font-size: 12px; max-width: 300px; }
+
+/* Print — show only the pv-sheet content, no chrome */
+@media print {
+  .no-print { display: none !important; }
+  body > *:not(.pv-overlay) { display: none !important; }
+  .pv-overlay {
+    position: static !important;
+    background: none !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+  .pv-sheet {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    max-width: 100% !important;
+  }
+  .pv-print-head { display: block !important; }
+  .pv-table { font-size: 11px; }
+  .pv-table td, .pv-table th { padding: 4px 8px; }
+  .pv-own td { background: #f5f5f5 !important; -webkit-print-color-adjust: exact; }
+  .pv-root { color: #000 !important; }
+}
 .auth-dev-week {
   background: var(--surface);
   border: 1px solid var(--border);
