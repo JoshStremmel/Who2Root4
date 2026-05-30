@@ -207,18 +207,25 @@ function Standings({ fav }) {
           <span className="mono">{Object.keys(window.TIEBREAKER_REASONS).length}</span>
         </div>
         <div className="tb-list">
-          {Object.entries(window.TIEBREAKER_REASONS).map(([abbr, tb]) => {
+          {Object.entries(window.TIEBREAKER_REASONS).flatMap(([abbr, tb]) => {
             const t = window.TEAMS[abbr];
-            return (
-              <div className="tb-row" key={abbr}>
+            // Group each loser under the specific step that resolved that matchup.
+            // Multiple losers beaten by the same step collapse into one row.
+            const byReason = {};
+            for (const loser of tb.over) {
+              const r = tb.reasons?.[loser] ?? tb.reason;
+              (byReason[r] = byReason[r] || []).push(loser);
+            }
+            return Object.entries(byReason).map(([reason, losers]) => (
+              <div className="tb-row" key={`${abbr}-${reason}`}>
                 <span className="tb-swatch" style={{ background: t.color }}></span>
                 <span className="tb-team">
                   <span className="mono ab">{abbr}</span>
-                  <span className="tb-over">over {tb.over.join(", ")}</span>
+                  <span className="tb-over">over {losers.join(", ")}</span>
                 </span>
-                <span className="tb-reason">{tb.reason}</span>
+                <span className="tb-reason">{reason}</span>
               </div>
-            );
+            ));
           })}
         </div>
 
