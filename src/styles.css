@@ -1039,6 +1039,8 @@ a.topnav .tab-graph, .topnav a.tab-graph {
   padding: 32px;
   box-shadow: var(--shadow-lg);
   animation: slideUp 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  max-height: 90vh;
+  overflow-y: auto;
 }
 @keyframes slideUp { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .detail .close {
